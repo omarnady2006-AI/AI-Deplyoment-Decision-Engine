@@ -1,727 +1,161 @@
 # AI Deployment Decision Engine
 
-A system that analyzes machine learning models and determines whether they can be safely deployed on a given hardware environment using runtime simulation and risk scoring.
+> AI infrastructure system that evaluates whether machine learning models can safely deploy on a target hardware environment using runtime simulation and risk scoring.
 
----
+## System Overview
 
-## Table of Contents
+```mermaid
+flowchart LR
+    A[User / API Client] --> B[Web UI]
+    B --> C[FastAPI Backend]
+    C --> D[Model Analysis Engine]
+    D --> E[Runtime Profiler]
+    E --> F[Risk Engine]
+    F --> G[Decision Layer]
+    G --> H[Deployment Report]
+```
 
-1. [Project Overview](#project-overview)
-2. [Key Features](#key-features)
-3. [Screenshots](#screenshots)
-4. [System Architecture](#system-architecture)
-5. [Core Components](#core-components)
-6. [Hardware Profiles](#hardware-profiles)
-7. [Risk Model](#risk-model)
-8. [Decision System](#decision-system)
-9. [Project Structure](#project-structure)
-10. [Running the Project](#running-the-project)
-11. [Experiment Validation](#experiment-validation)
-12. [License](#license)
-
----
-
-## Project Overview
-
-The **AI Deployment Decision Engine** is an automated model assessment system that evaluates whether a machine learning model can be safely and reliably deployed onto a target hardware environment. Engineers submit a model and receive a structured deployment decision backed by measurable signals and reproducible scoring — replacing informal compatibility reviews with a consistent, auditable protocol.
-
-The system operates as a **deployment gate**: a policy-enforcing layer positioned between model development and production infrastructure. Every model must pass through the engine before it is authorized for deployment. The engine does not assume suitability; it verifies it.
-
-Deploying a model without rigorous compatibility checks introduces operational risk. Undersized hardware produces latency violations. Overlooked memory constraints cause runtime failures. Security gaps in inference pipelines create exploitable surfaces. This engine makes deployment decisions **systematic, auditable, and repeatable** — converting a multi-variable compatibility problem into a deterministic, signal-driven verdict with full signal-level traceability.
-
----
+The AI Deployment Decision Engine starts processing when a User or API Client submits a model via the Web UI to the FastAPI Backend. The Model Analysis Engine parses the model architecture and forwards the properties into the Runtime Profiler to simulate constrained hardware limits locally. These dynamic performance metrics alongside strict framework compatibility validations are immediately aggregated by the Risk Engine, which ultimately quantifies safe deployment margins. Finally, the Decision Layer evaluates this composite risk score and structurally commits an actionable final Deployment Report.
 
 ## Key Features
 
-- **ONNX model structural analysis** — Static graph parsing with operator-level breakdown and parameter quantification
-- **Runtime performance simulation** — Simulation-based latency, throughput, and memory estimation without requiring physical hardware
-- **Hardware profile evaluation** — Four standardized tiers: Edge, Standard, Production, and HPC
-- **Risk scoring engine** — Nine-signal normalized scoring with configurable per-signal weights
-- **Deterministic deployment decisions** — Threshold-based policy mapping; identical inputs always produce identical outputs
-- **Confidence estimation** — Per-decision reliability scoring that quantifies uncertainty in the analysis
-- **FastAPI backend** — Concurrent-safe `/analyze` endpoint with structured JSON responses
-- **Web UI interface** — Browser-based submission, result visualization, and report export
-- **Concurrency-safe analysis** — No shared mutable state; safe under concurrent API load
-- **Validation experiment harness** — Scripted suite verifying risk scaling, confidence variation, determinism, and concurrency correctness
+- **Hardware-Aware Profiling:** Intelligently simulates ML model runtime limits across specifically designated target compute architectures.
+- **Real-Time Risk Scoring:** Natively aggregates multiple critical dimensions—including latency pressure, memory density, and raw hardware tier—into a core deterministic score metric.
+- **Automated Decision Gatekeeper:** Executes powerful threshold-based policy governance seamlessly determining whether to accept, provisionally limit, or totally block system deployments.
+- **Deep Compatibility Integrity:** Rigorously verifies structural matrix bounds mapped accurately to key ML framework ecosystems such as PyTorch, ONNX, and TensorRT processing targets.
+- **State-Safe Execution Pipeline:** Employs entirely thread-safe evaluation components, ensuring concurrent user analytics safely operate completely unhindered by parallel state bleeding.
+- **Deterministic SLA Controls:** Employs dynamically scaling boundaries protecting main operational systems against silent Over-Memory errors or dangerous production inference crashes.
 
----
+## Full System Architecture
 
-## Screenshots
+```mermaid
+flowchart TD
 
-> All screenshots were captured from the live UI at 2× device pixel ratio (2880 × 1800 effective resolution).
+User --> UI
+UI --> API
 
-### Dashboard
+API --> Pipeline
 
-The engine opens on an animated splash screen listing supported inference runtimes. Click **Get Started** to enter the main application shell, which presents the four workflow modules: Model, Analysis, Reports, and Settings.
+Pipeline --> ModelAnalysis
+Pipeline --> RuntimeProfiler
+Pipeline --> FrameworkAdapter
+Pipeline --> RiskEngine
+Pipeline --> DecisionEngine
+Pipeline --> ConfidenceEngine
 
-![Dashboard](docs/images/ui-dashboard.png)
+ModelAnalysis --> ModelProfile
+RuntimeProfiler --> PerformanceSignals
+FrameworkAdapter --> CompatibilityReport
 
-### Model Upload
+PerformanceSignals --> RiskEngine
+CompatibilityReport --> RiskEngine
+ModelProfile --> RiskEngine
 
-The **Model** tab combines the upload interface with the full hardware environment configuration panel. Engineers upload an ONNX model, configure CPU cores, architecture (x86 / ARM / ARM64 / RISC-V), GPU and CUDA availability, VRAM, total RAM, DDR type, and SLA constraints including target latency and memory limits — all in one view.
+RiskEngine --> RiskScore
 
-![Model Upload](docs/images/ui-model-upload.png)
+RiskScore --> DecisionEngine
+DecisionEngine --> DeploymentDecision
+ConfidenceEngine --> DeploymentReport
 
-### Hardware Profile Configuration
-
-The **Analysis** tab displays the runtime assessment output once a model has been submitted. Cards show the Best Runtime recommendation with latency and readiness indicators, a Confidence score ring, and a Model Info panel with operator coverage metrics and graph export capability.
-
-![Hardware Profile Configuration](docs/images/ui-hardware-profile.png)
-
-### Analysis Results
-
-The **Reports** tab presents the final deployment output: Latency, Decision, Confidence, and Issues header tiles above a STATE JSON viewer with one-click Copy and Download. The full machine-readable report is available for pipeline integration or archival.
-
-![Analysis Results](docs/images/ui-analysis-results.png)
-
----
-
-## System Architecture
-
-The engine processes model submissions through a sequential pipeline of specialized components. Each layer transforms raw model data into a higher-level signal until a final deployment decision is produced.
-
-<p align="center">
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 920" width="680">
-  <defs>
-    <!-- Background gradient -->
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#0d0021"/>
-      <stop offset="100%" stop-color="#1a0533"/>
-    </linearGradient>
-
-    <!-- Card gradients by layer type -->
-    <linearGradient id="gUser"    x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#4c1d95"/><stop offset="100%" stop-color="#2d1060"/>
-    </linearGradient>
-    <linearGradient id="gUI"      x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#5b21b6"/><stop offset="100%" stop-color="#3b0764"/>
-    </linearGradient>
-    <linearGradient id="gAPI"     x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#6d28d9"/><stop offset="100%" stop-color="#4c1d95"/>
-    </linearGradient>
-    <linearGradient id="gAnalysis" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#5b21b6"/>
-    </linearGradient>
-    <linearGradient id="gProfiler" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#6d28d9"/>
-    </linearGradient>
-    <linearGradient id="gRisk"    x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#a78bfa"/><stop offset="100%" stop-color="#7c3aed"/>
-    </linearGradient>
-    <linearGradient id="gDecision" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#8b5cf6"/>
-    </linearGradient>
-    <linearGradient id="gReport"  x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#e879f9"/><stop offset="100%" stop-color="#a855f7"/>
-    </linearGradient>
-
-    <!-- Connector arrow -->
-    <linearGradient id="connGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#7c3aed" stop-opacity="0.8"/>
-      <stop offset="100%" stop-color="#e879f9" stop-opacity="0.8"/>
-    </linearGradient>
-
-    <!-- Glow filter for cards -->
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
-      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-
-    <!-- Subtle outer glow for report node -->
-    <filter id="glowStrong" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"/>
-      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-
-    <!-- Arrowhead marker -->
-    <marker id="arrow" markerWidth="8" markerHeight="8" refX="5" refY="4" orient="auto">
-      <path d="M1,1 L7,4 L1,7 Z" fill="url(#connGrad)" opacity="0.9"/>
-    </marker>
-
-    <!-- Dot marker for secondary label connectors -->
-    <marker id="dot" markerWidth="6" markerHeight="6" refX="3" refY="3">
-      <circle cx="3" cy="3" r="2" fill="#a78bfa" opacity="0.7"/>
-    </marker>
-  </defs>
-
-  <!-- ── Background ── -->
-  <rect width="780" height="920" rx="16" fill="url(#bg)"/>
-
-  <!-- Subtle grid lines -->
-  <g opacity="0.04" stroke="#a78bfa" stroke-width="0.5">
-    <line x1="0" y1="115" x2="780" y2="115"/>
-    <line x1="0" y1="230" x2="780" y2="230"/>
-    <line x1="0" y1="345" x2="780" y2="345"/>
-    <line x1="0" y1="460" x2="780" y2="460"/>
-    <line x1="0" y1="575" x2="780" y2="575"/>
-    <line x1="0" y1="690" x2="780" y2="690"/>
-    <line x1="0" y1="805" x2="780" y2="805"/>
-    <line x1="195" y1="0" x2="195" y2="920"/>
-    <line x1="390" y1="0" x2="390" y2="920"/>
-    <line x1="585" y1="0" x2="585" y2="920"/>
-  </g>
-
-  <!-- ── Title ── -->
-  <text x="390" y="38" text-anchor="middle"
-        font-family="'Courier New', monospace" font-size="13"
-        font-weight="700" fill="#e879f9" letter-spacing="3">
-    DEPLOYMENT PIPELINE
-  </text>
-  <line x1="100" y1="48" x2="680" y2="48" stroke="#7c3aed" stroke-width="0.5" opacity="0.5"/>
-
-  <!-- ─────────────────────────────────────────
-       HELPER MACRO: each card = rect + icon area + label + sublabel
-       Positions (cx, cy = center of card), w=340, h=72
-       ───────────────────────────────────────── -->
-
-  <!-- LAYER 1 ── USER -->
-  <g filter="url(#glow)">
-    <rect x="220" y="62" width="340" height="72" rx="12"
-          fill="url(#gUser)" stroke="#7c3aed" stroke-width="1.2" opacity="0.95"/>
-    <!-- icon bg -->
-    <rect x="236" y="78" width="40" height="40" rx="8" fill="#3b0764" opacity="0.7"/>
-    <!-- person icon -->
-    <circle cx="256" cy="91" r="7" fill="none" stroke="#c4b5fd" stroke-width="1.5"/>
-    <path d="M242,118 Q256,108 270,118" fill="none" stroke="#c4b5fd" stroke-width="1.5" stroke-linecap="round"/>
-    <!-- text -->
-    <text x="292" y="94" font-family="'Courier New', monospace" font-size="14"
-          font-weight="700" fill="#f3e8ff">USER</text>
-    <text x="292" y="112" font-family="'Courier New', monospace" font-size="10"
-          fill="#a78bfa">Browser  ·  REST API</text>
-    <!-- step badge -->
-    <rect x="526" y="78" width="22" height="18" rx="4" fill="#3b0764" opacity="0.8"/>
-    <text x="537" y="91" text-anchor="middle" font-family="'Courier New', monospace"
-          font-size="9" fill="#e879f9">01</text>
-  </g>
-
-  <!-- connector 1→2 -->
-  <line x1="390" y1="134" x2="390" y2="153"
-        stroke="url(#connGrad)" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- LAYER 2 ── WEB UI -->
-  <g filter="url(#glow)">
-    <rect x="220" y="157" width="340" height="72" rx="12"
-          fill="url(#gUI)" stroke="#8b5cf6" stroke-width="1.2" opacity="0.95"/>
-    <rect x="236" y="173" width="40" height="40" rx="8" fill="#2d1060" opacity="0.7"/>
-    <!-- monitor icon -->
-    <rect x="242" y="179" width="28" height="19" rx="2" fill="none" stroke="#c4b5fd" stroke-width="1.4"/>
-    <line x1="256" y1="198" x2="256" y2="204" stroke="#c4b5fd" stroke-width="1.4"/>
-    <line x1="250" y1="204" x2="262" y2="204" stroke="#c4b5fd" stroke-width="1.4"/>
-    <text x="292" y="189" font-family="'Courier New', monospace" font-size="14"
-          font-weight="700" fill="#f3e8ff">WEB UI</text>
-    <text x="292" y="207" font-family="'Courier New', monospace" font-size="10"
-          fill="#a78bfa">FastAPI  ·  HTML / JS</text>
-    <rect x="526" y="173" width="22" height="18" rx="4" fill="#2d1060" opacity="0.8"/>
-    <text x="537" y="186" text-anchor="middle" font-family="'Courier New', monospace"
-          font-size="9" fill="#e879f9">02</text>
-  </g>
-
-  <!-- connector 2→3 -->
-  <line x1="390" y1="229" x2="390" y2="248"
-        stroke="url(#connGrad)" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- LAYER 3 ── FASTAPI BACKEND -->
-  <g filter="url(#glow)">
-    <rect x="220" y="252" width="340" height="72" rx="12"
-          fill="url(#gAPI)" stroke="#9333ea" stroke-width="1.2" opacity="0.95"/>
-    <rect x="236" y="268" width="40" height="40" rx="8" fill="#3b0764" opacity="0.7"/>
-    <!-- server/api icon -->
-    <rect x="243" y="274" width="26" height="6" rx="2" fill="none" stroke="#c4b5fd" stroke-width="1.3"/>
-    <rect x="243" y="284" width="26" height="6" rx="2" fill="none" stroke="#c4b5fd" stroke-width="1.3"/>
-    <rect x="243" y="294" width="26" height="6" rx="2" fill="none" stroke="#c4b5fd" stroke-width="1.3"/>
-    <circle cx="265" cy="277" r="1.5" fill="#e879f9"/>
-    <circle cx="265" cy="287" r="1.5" fill="#a78bfa"/>
-    <circle cx="265" cy="297" r="1.5" fill="#7c3aed"/>
-    <text x="292" y="284" font-family="'Courier New', monospace" font-size="14"
-          font-weight="700" fill="#f3e8ff">FASTAPI BACKEND</text>
-    <text x="292" y="302" font-family="'Courier New', monospace" font-size="10"
-          fill="#a78bfa">/analyze  ·  /health  ·  JSON</text>
-    <rect x="526" y="268" width="22" height="18" rx="4" fill="#3b0764" opacity="0.8"/>
-    <text x="537" y="281" text-anchor="middle" font-family="'Courier New', monospace"
-          font-size="9" fill="#e879f9">03</text>
-  </g>
-
-  <!-- connector 3→4 -->
-  <line x1="390" y1="324" x2="390" y2="343"
-        stroke="url(#connGrad)" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- LAYER 4 ── MODEL ANALYSIS ENGINE -->
-  <g filter="url(#glow)">
-    <rect x="220" y="347" width="340" height="72" rx="12"
-          fill="url(#gAnalysis)" stroke="#a855f7" stroke-width="1.2" opacity="0.95"/>
-    <rect x="236" y="363" width="40" height="40" rx="8" fill="#3b0764" opacity="0.7"/>
-    <!-- graph/node icon -->
-    <circle cx="249" cy="374" r="4" fill="none" stroke="#c4b5fd" stroke-width="1.3"/>
-    <circle cx="263" cy="383" r="4" fill="none" stroke="#e879f9" stroke-width="1.3"/>
-    <circle cx="249" cy="392" r="4" fill="none" stroke="#c4b5fd" stroke-width="1.3"/>
-    <line x1="253" y1="375" x2="259" y2="381" stroke="#a78bfa" stroke-width="1"/>
-    <line x1="253" y1="391" x2="259" y2="385" stroke="#a78bfa" stroke-width="1"/>
-    <text x="292" y="379" font-family="'Courier New', monospace" font-size="14"
-          font-weight="700" fill="#f3e8ff">MODEL ANALYSIS</text>
-    <text x="292" y="397" font-family="'Courier New', monospace" font-size="10"
-          fill="#a78bfa">ONNX graph  ·  Operators  ·  Params</text>
-    <rect x="526" y="363" width="22" height="18" rx="4" fill="#3b0764" opacity="0.8"/>
-    <text x="537" y="376" text-anchor="middle" font-family="'Courier New', monospace"
-          font-size="9" fill="#e879f9">04</text>
-  </g>
-
-  <!-- connector 4→5 -->
-  <line x1="390" y1="419" x2="390" y2="438"
-        stroke="url(#connGrad)" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- LAYER 5 ── RUNTIME PROFILER -->
-  <g filter="url(#glow)">
-    <rect x="220" y="442" width="340" height="72" rx="12"
-          fill="url(#gProfiler)" stroke="#b57bee" stroke-width="1.2" opacity="0.95"/>
-    <rect x="236" y="458" width="40" height="40" rx="8" fill="#3b0764" opacity="0.7"/>
-    <!-- waveform / chart icon -->
-    <polyline points="241,484 246,472 251,480 256,466 261,476 266,470 271,478"
-              fill="none" stroke="#e879f9" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <text x="292" y="474" font-family="'Courier New', monospace" font-size="14"
-          font-weight="700" fill="#f3e8ff">RUNTIME PROFILER</text>
-    <text x="292" y="492" font-family="'Courier New', monospace" font-size="10"
-          fill="#a78bfa">Latency  ·  Memory  ·  Throughput</text>
-    <rect x="526" y="458" width="22" height="18" rx="4" fill="#3b0764" opacity="0.8"/>
-    <text x="537" y="471" text-anchor="middle" font-family="'Courier New', monospace"
-          font-size="9" fill="#e879f9">05</text>
-  </g>
-
-  <!-- connector 5→6 -->
-  <line x1="390" y1="514" x2="390" y2="533"
-        stroke="url(#connGrad)" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- LAYER 6 ── RISK ENGINE -->
-  <g filter="url(#glow)">
-    <rect x="220" y="537" width="340" height="72" rx="12"
-          fill="url(#gRisk)" stroke="#c084fc" stroke-width="1.2" opacity="0.95"/>
-    <rect x="236" y="553" width="40" height="40" rx="8" fill="#3b0764" opacity="0.7"/>
-    <!-- shield / risk icon -->
-    <path d="M256,557 L268,562 L268,572 Q268,580 256,583 Q244,580 244,572 L244,562 Z"
-          fill="none" stroke="#f0abfc" stroke-width="1.4"/>
-    <text x="256" y="574" text-anchor="middle" font-family="'Courier New', monospace"
-          font-size="9" fill="#e879f9" font-weight="700">!</text>
-    <text x="292" y="569" font-family="'Courier New', monospace" font-size="14"
-          font-weight="700" fill="#f3e8ff">RISK ENGINE</text>
-    <text x="292" y="587" font-family="'Courier New', monospace" font-size="10"
-          fill="#a78bfa">9 signals  ·  Σ(w×s)  ·  Score [0–10]</text>
-    <rect x="526" y="553" width="22" height="18" rx="4" fill="#3b0764" opacity="0.8"/>
-    <text x="537" y="566" text-anchor="middle" font-family="'Courier New', monospace"
-          font-size="9" fill="#e879f9">06</text>
-  </g>
-
-  <!-- connector 6→7 -->
-  <line x1="390" y1="609" x2="390" y2="628"
-        stroke="url(#connGrad)" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- LAYER 7 ── DECISION LAYER -->
-  <g filter="url(#glow)">
-    <rect x="220" y="632" width="340" height="72" rx="12"
-          fill="url(#gDecision)" stroke="#d8b4fe" stroke-width="1.2" opacity="0.95"/>
-    <rect x="236" y="648" width="40" height="40" rx="8" fill="#3b0764" opacity="0.7"/>
-    <!-- decision / branch icon -->
-    <circle cx="256" cy="661" r="4" fill="none" stroke="#f0abfc" stroke-width="1.4"/>
-    <line x1="256" y1="665" x2="256" y2="671" stroke="#f0abfc" stroke-width="1.3"/>
-    <line x1="256" y1="671" x2="248" y2="679" stroke="#86efac" stroke-width="1.3"/>
-    <line x1="256" y1="671" x2="264" y2="679" stroke="#f87171" stroke-width="1.3"/>
-    <circle cx="248" cy="681" r="2.5" fill="#86efac" opacity="0.9"/>
-    <circle cx="264" cy="681" r="2.5" fill="#f87171" opacity="0.9"/>
-    <text x="292" y="664" font-family="'Courier New', monospace" font-size="14"
-          font-weight="700" fill="#f3e8ff">DECISION LAYER</text>
-    <text x="292" y="682" font-family="'Courier New', monospace" font-size="10"
-          fill="#a78bfa">ALLOW  ·  WITH_CONDITIONS  ·  BLOCK</text>
-    <rect x="526" y="648" width="22" height="18" rx="4" fill="#3b0764" opacity="0.8"/>
-    <text x="537" y="661" text-anchor="middle" font-family="'Courier New', monospace"
-          font-size="9" fill="#e879f9">07</text>
-  </g>
-
-  <!-- connector 7→8 -->
-  <line x1="390" y1="704" x2="390" y2="723"
-        stroke="url(#connGrad)" stroke-width="2" marker-end="url(#arrow)"/>
-
-  <!-- LAYER 8 ── DEPLOYMENT REPORT (terminal node — extra glow) -->
-  <g filter="url(#glowStrong)">
-    <rect x="200" y="727" width="380" height="80" rx="14"
-          fill="url(#gReport)" stroke="#f0abfc" stroke-width="1.8" opacity="0.98"/>
-    <!-- extra glow border -->
-    <rect x="200" y="727" width="380" height="80" rx="14"
-          fill="none" stroke="#e879f9" stroke-width="0.5" opacity="0.4"/>
-    <rect x="216" y="743" width="44" height="44" rx="9" fill="#3b0764" opacity="0.65"/>
-    <!-- document icon -->
-    <rect x="224" y="749" width="22" height="28" rx="2" fill="none" stroke="#f3e8ff" stroke-width="1.4"/>
-    <line x1="228" y1="757" x2="242" y2="757" stroke="#f3e8ff" stroke-width="1" opacity="0.7"/>
-    <line x1="228" y1="762" x2="242" y2="762" stroke="#f3e8ff" stroke-width="1" opacity="0.7"/>
-    <line x1="228" y1="767" x2="236" y2="767" stroke="#f3e8ff" stroke-width="1" opacity="0.7"/>
-    <!-- checkmark -->
-    <circle cx="243" cy="750" r="7" fill="#86efac" opacity="0.9"/>
-    <path d="M239,750 L242,753 L248,747" fill="none" stroke="#14532d" stroke-width="1.8" stroke-linecap="round"/>
-    <text x="274" y="762" font-family="'Courier New', monospace" font-size="15"
-          font-weight="700" fill="#fdf4ff" letter-spacing="0.5">DEPLOYMENT REPORT</text>
-    <text x="274" y="782" font-family="'Courier New', monospace" font-size="10"
-          fill="#f3e8ff" opacity="0.85">Risk score  ·  Verdict  ·  Confidence  ·  JSON</text>
-    <rect x="536" y="743" width="28" height="18" rx="4" fill="#3b0764" opacity="0.8"/>
-    <text x="550" y="756" text-anchor="middle" font-family="'Courier New', monospace"
-          font-size="9" fill="#e879f9">08</text>
-  </g>
-
-  <!-- ── Side annotations ── -->
-  <!-- Left rail -->
-  <line x1="92" y1="80" x2="92" y2="800" stroke="#7c3aed" stroke-width="0.5" opacity="0.3"
-        stroke-dasharray="4,6"/>
-  <text x="88" y="160" text-anchor="middle" font-family="'Courier New', monospace"
-        font-size="8" fill="#7c3aed" opacity="0.6" transform="rotate(-90, 88, 160)">
-    INPUT LAYER
-  </text>
-  <text x="88" y="380" text-anchor="middle" font-family="'Courier New', monospace"
-        font-size="8" fill="#7c3aed" opacity="0.6" transform="rotate(-90, 88, 380)">
-    ANALYSIS LAYER
-  </text>
-  <text x="88" y="610" text-anchor="middle" font-family="'Courier New', monospace"
-        font-size="8" fill="#7c3aed" opacity="0.6" transform="rotate(-90, 88, 610)">
-    SCORING LAYER
-  </text>
-  <text x="88" y="780" text-anchor="middle" font-family="'Courier New', monospace"
-        font-size="8" fill="#e879f9" opacity="0.6" transform="rotate(-90, 88, 780)">
-    OUTPUT LAYER
-  </text>
-
-  <!-- Right rail annotations -->
-  <line x1="688" y1="80" x2="688" y2="800" stroke="#7c3aed" stroke-width="0.5" opacity="0.3"
-        stroke-dasharray="4,6"/>
-  <!-- Side labels for key layers -->
-  <text x="712" y="295" font-family="'Courier New', monospace" font-size="8"
-        fill="#a78bfa" opacity="0.7">REST</text>
-  <text x="712" y="390" font-family="'Courier New', monospace" font-size="8"
-        fill="#a78bfa" opacity="0.7">ONNX</text>
-  <text x="712" y="485" font-family="'Courier New', monospace" font-size="8"
-        fill="#a78bfa" opacity="0.7">SIM</text>
-  <text x="712" y="580" font-family="'Courier New', monospace" font-size="8"
-        fill="#c4b5fd" opacity="0.7">SCORE</text>
-  <text x="712" y="674" font-family="'Courier New', monospace" font-size="8"
-        fill="#f0abfc" opacity="0.7">GATE</text>
-
-  <!-- ── Bottom legend ── -->
-  <line x1="60" y1="840" x2="720" y2="840" stroke="#7c3aed" stroke-width="0.5" opacity="0.4"/>
-  <rect x="60" y="852" width="10" height="10" rx="2" fill="#4c1d95"/>
-  <text x="76" y="862" font-family="'Courier New', monospace" font-size="9" fill="#a78bfa">Interface</text>
-  <rect x="155" y="852" width="10" height="10" rx="2" fill="#7c3aed"/>
-  <text x="171" y="862" font-family="'Courier New', monospace" font-size="9" fill="#a78bfa">Transport</text>
-  <rect x="255" y="852" width="10" height="10" rx="2" fill="#a78bfa"/>
-  <text x="271" y="862" font-family="'Courier New', monospace" font-size="9" fill="#a78bfa">Analysis</text>
-  <rect x="345" y="852" width="10" height="10" rx="2" fill="#c4b5fd"/>
-  <text x="361" y="862" font-family="'Courier New', monospace" font-size="9" fill="#a78bfa">Scoring</text>
-  <rect x="425" y="852" width="10" height="10" rx="2" fill="#e879f9"/>
-  <text x="441" y="862" font-family="'Courier New', monospace" font-size="9" fill="#a78bfa">Output</text>
-  <!-- determinism note -->
-  <text x="530" y="862" font-family="'Courier New', monospace" font-size="8"
-        fill="#7c3aed" opacity="0.7">deterministic · concurrent-safe</text>
-
-  <!-- ── Subtitle ── -->
-  <text x="390" y="900" text-anchor="middle" font-family="'Courier New', monospace"
-        font-size="9" fill="#7c3aed" opacity="0.5" letter-spacing="1">
-    AI DEPLOYMENT DECISION ENGINE  ·  v1.4
-  </text>
-</svg>
-</p>
-
-A user submits a model through the browser UI or REST API. The FastAPI backend routes the submission into the pipeline, where the Model Analysis Engine performs static graph inspection, the Runtime Profiler simulates execution against the specified hardware tier, and the Risk Engine aggregates nine normalized signals into a composite score. The Decision Layer maps that score to a policy verdict, and the complete result is serialized into a structured Deployment Report returned to the caller.
-
-### Pipeline Layer Reference
-
-| Layer | Responsibility |
-|---|---|
-| **Web UI** | Browser-based interface for submitting models and reviewing results. Renders analysis reports and decision verdicts. |
-| **FastAPI Backend** | Exposes the `/analyze` REST endpoint. Handles request validation, routes submissions into the pipeline, and returns structured JSON responses. |
-| **Model Analysis Engine** | Parses ONNX model graphs. Identifies operators, measures node count, quantifies parameter density, and flags unsupported operations for the target runtime. |
-| **Runtime Profiler** | Simulates model execution against a specified hardware profile. Estimates per-layer latency, peak memory usage, and I/O throughput requirements. |
-| **Risk Engine** | Receives profiling output and hardware profile metadata. Aggregates multiple risk signals into a single normalized composite score on a 0–10 scale. |
-| **Decision Layer** | Applies the risk score to a threshold-based policy table. Emits one of three deployment verdicts: `ALLOW`, `ALLOW_WITH_CONDITIONS`, or `BLOCK`. |
-| **Deployment Report** | Serializes the complete analysis result — including per-signal breakdowns, confidence level, hardware tier, and final decision — into a structured report delivered via the API and rendered in the UI. |
-
----
-
-## Core Components
-
-### `pipeline.py` — Orchestration Pipeline
-
-The top-level controller for the analysis workflow. Accepts a model path and hardware profile identifier as inputs. Instantiates each downstream module in sequence, passes intermediate results between stages, and aggregates outputs into the final deployment report object. All error handling and logging is centralized here.
-
-### `model_analysis.py` — ONNX Graph Analysis
-
-Loads an ONNX model from disk and performs static graph analysis. Extracts operator types and frequencies, node count and depth, parameter tensor shapes and sizes, dynamic shape indicators, and the presence of custom or non-standard operators that may lack runtime support. Produces a structured `ModelProfile` dataclass consumed by downstream components.
-
-### `runtime_profiler.py` — Execution Profiling
-
-Accepts a `ModelProfile` and a `HardwareProfile` as inputs. Uses operator-level latency tables and memory bandwidth models to estimate inference latency (ms per forward pass), peak memory allocation (MB), sustained throughput (inferences per second), and I/O pressure (read/write bandwidth demands). Profiling is simulation-based and does not require physical hardware. Results are reproducible given the same model and hardware tier inputs.
-
-### `framework_adapter.py` — Inference Runtime Adapter
-
-Abstracts differences between inference runtimes (ONNX Runtime, TensorFlow Lite, PyTorch, TensorRT). Maps model operators to runtime-specific execution paths and identifies compatibility gaps. Provides the risk engine with a `CompatibilityReport` indicating which operators are natively supported, which require fallback kernels, and which are unsupported on the target runtime.
-
-### `risk_engine.py` — Risk Signal Aggregation
-
-The core scoring module. Accepts profiling results, hardware specifications, compatibility reports, and environmental signals. Normalizes each signal to a 0–1 range, applies configurable per-signal weights, and computes a weighted composite risk score in the range [0.0, 10.0]. See the [Risk Model](#risk-model) section for signal definitions and weighting logic.
-
-### `decision.py` — Deployment Decision Mapper
-
-Applies a threshold policy to the composite risk score. Produces a `DeploymentDecision` with three possible values: `ALLOW`, `ALLOW_WITH_CONDITIONS`, or `BLOCK`. When the decision is `ALLOW_WITH_CONDITIONS`, the module also generates a list of specific, actionable remediation conditions that must be satisfied before deployment proceeds.
-
-### `confidence.py` — Decision Confidence Estimation
-
-Estimates the reliability of the risk score and deployment decision. Confidence is reduced by high variance across individual signal scores, limited operator coverage data for the target hardware, the presence of dynamic shapes that were not fully resolvable at analysis time, and unusual model architectures with limited profiling history. Outputs a `ConfidenceLevel` (`HIGH`, `MEDIUM`, `LOW`) and a numerical confidence percentage attached to the final deployment report.
-
----
-
-## Hardware Profiles
-
-The engine evaluates deployment feasibility across four standardized hardware tiers. Each tier defines a specification envelope against which the model's resource requirements are compared. The engine also evaluates **margin** — deployments that consume more than 85% of a tier's resources in any single dimension are treated as elevated risk, even if they nominally fit within the limits.
-
-| Tier | Label | Description | Typical Use Case |
-|---|---|---|---|
-| 1 | `EDGE` | Low-power embedded or mobile devices. Constrained CPU, limited RAM, no discrete GPU. | IoT sensors, on-device mobile inference |
-| 2 | `STANDARD` | Typical cloud virtual machine instance. Moderate multi-core CPU, standard RAM, optional GPU. | Development environments, low-traffic API inference |
-| 3 | `PRODUCTION` | Dedicated production inference server. High-core-count CPU, substantial RAM, discrete GPU with tensor acceleration. | Production REST APIs, batch inference pipelines |
-| 4 | `HPC` | High-performance compute node. Multi-GPU cluster, large RAM, high-bandwidth interconnect. | Large model inference, distributed batch processing |
-
----
-
-## Risk Model
-
-The risk engine evaluates nine distinct signals. Each signal is independently measured, normalized to a [0.0, 1.0] range, and combined using a weighted sum to produce the final composite risk score.
-
-### Signal Definitions
-
-| Signal | Description | Source |
-|---|---|---|
-| **CPU Pressure** | Ratio of estimated CPU utilization to available compute capacity on the target tier | Runtime Profiler |
-| **Memory Pressure** | Ratio of peak memory allocation to available RAM on the target tier | Runtime Profiler |
-| **GPU Availability** | Whether the model requires GPU acceleration and whether the target tier provides it | Hardware Profile |
-| **Latency Requirements** | Whether estimated inference latency satisfies the SLA target for the deployment context | Runtime Profiler |
-| **I/O Bandwidth** | Whether estimated I/O throughput requirements fall within the tier's storage bandwidth limits | Runtime Profiler |
-| **Network Risk** | Whether the model's serving configuration introduces network-related failure modes (timeouts, payload size) | Framework Adapter |
-| **Future Drift Risk** | Estimated susceptibility of the model to performance degradation under distribution shift | Model Analysis |
-| **Compatibility Risk** | Proportion of model operators lacking native support on the target inference runtime | Framework Adapter |
-| **Security Signal** | Presence of known operator patterns or serialization formats associated with security vulnerabilities | Model Analysis |
-
-### Score Aggregation
-
-```
-risk_score = Σ ( signal_value[i] × weight[i] )   for i in 1..9
+DeploymentDecision --> DeploymentReport
 ```
 
-All weights sum to 1.0 and are configurable per deployment context. The default weighting prioritizes Memory Pressure, Latency Requirements, and Compatibility Risk as the three highest-weighted signals. The resulting composite score falls in the range **[0.0, 10.0]**, where 0.0 represents zero detectable risk and 10.0 represents maximum risk across all signals.
+The system is rigorously isolated into discrete functional execution layers designed entirely to ensure secure calculation safety. The external API interfaces drive user tasks into an orchestrated asynchronous system Pipeline functioning without architectural cross-locking barriers. From here, independent analytical services simultaneously gather structural target conditions including active model footprints, local node performance limits, and framework deployment integrity limits. Information streams synchronously converge inside the advanced Risk Engine layers where arrayed diagnostic evaluations generate a continuous global Risk Score rating. Concurrently, the final Decision Engine matches the rating index heavily against designated hardware SLAs, while the underlying Confidence Engine continuously verifies assessment transparency, cleanly uniting into a robust Deployment Report. 
 
----
+## Risk Scoring Model
+
+```mermaid
+flowchart LR
+
+CPU[CPU Pressure] --> Risk
+MEM[Memory Pressure] --> Risk
+GPU[GPU Availability] --> Risk
+LAT[Latency Requirement] --> Risk
+IO[I/O Bandwidth] --> Risk
+NET[Network Risk] --> Risk
+DRIFT[Future Drift Risk] --> Risk
+COMP[Compatibility Risk] --> Risk
+SEC[Security Signal] --> Risk
+
+Risk --> RiskScore[Composite Risk Score 0–10]
+```
+
+The underlying Risk Engine deploys a complex dynamically-weighted signal aggregation map reducing multidimensional stress bounds specifically into a final scalar metric indexed securely from `0.0` (optimal) to `10.0` (failing). Concrete operational deficiencies including immense Memory Pressure or broken Target GPU Availability natively command massive multiplier priorities immediately applying drastic composite score escalations. Meanwhile, softer telemetry limitations dealing with local Network Risk or potential execution drift evenly penalize the engine according precisely relative to configurable platform tolerance parameters, producing an ultimately refined unified evaluation rating. 
 
 ## Decision System
 
-The Decision Layer maps the composite risk score to one of three deployment verdicts using a fixed threshold policy. Decisions are derived deterministically — there is no manual override capability in the engine. If a blocking decision is disputed, the correct resolution path is to modify the model or target hardware profile and resubmit.
+```mermaid
+flowchart TD
 
-### Threshold Policy
+RiskScore --> Decision
 
-| Risk Score Range | Verdict | Meaning |
-|---|---|---|
-| `0.0 – 3.0` | `✅ ALLOW` | Model is cleared for deployment. No conditions are imposed. |
-| `3.0 – 6.0` | `⚠️ ALLOW_WITH_CONDITIONS` | Deployment may proceed subject to explicit remediation conditions. |
-| `6.0 – 10.0` | `🚫 BLOCK` | Deployment is rejected. The model must not be deployed in its current state. |
+Decision -->|0-3| Allow
+Decision -->|3-6| Conditional
+Decision -->|6-10| Block
+```
 
-### Condition Generation
+The policy mechanism inside the Decision Layer definitively enforces unyielding gateway safety based explicitly on internal scoring map vectors resolved inside the engine bounds. Composite risk scores computed between exactly 0 and 3 natively pass execution protocols certifying perfectly normalized operations. A boundary measurement returning 3 sequentially up through 6 categorizes as a clear 'Conditional' rating, forcefully communicating potential minor SLA degradations possibly demanding manual review. Ultimately, workloads triggering high-risk bands between 6 and 10 forcefully crash out entirely via automated system Block policies proactively guarding downstream datacenter integrity limits against critical crash thresholds.
 
-When the verdict is `ALLOW_WITH_CONDITIONS`, the Decision Layer generates a list of specific, actionable conditions derived from the signals that contributed most to the elevated score. Example conditions:
+## Hardware Tiers
 
-- *"Reduce peak memory footprint by at least 20% before deployment to STANDARD tier."*
-- *"Replace unsupported custom operators with runtime-native equivalents prior to ONNX export."*
-- *"Deploy behind a request queue with a maximum concurrency of 4 to avoid CPU saturation."*
-
-These conditions are included in the deployment report and must be resolved by the submitting engineer before resubmission.
-
----
+| Hardware Tier | Core Infrastructure Profile | VRAM Parameters | Critical SLA Target |
+| :--- | :--- | :--- | :--- |
+| **EDGE** | Low-power optimized SOC nodes, local constrained devices | `≤ 4GB` | `< 500ms` |
+| **STANDARD** | General-purpose cloud clusters, basic baseline network nodes | `8GB - 16GB` | `< 200ms` |
+| **PRODUCTION** | Premium real-time endpoints, dedicated accelerator nodes | `24GB - 48GB` | `< 50ms` |
+| **HPC** | Matrix-parallel superclusters, massive unified framework models | `80GB+` | `< 10ms` |
 
 ## Project Structure
 
-```
-ai-deployment-decision-engine/
-│
+```text
+deployment_decision_engine/
 ├── src/
-│   ├── api/
-│   │   ├── routes.py              # FastAPI route definitions
-│   │   ├── schemas.py             # Pydantic request/response models
-│   │   └── middleware.py          # Logging, error handling, CORS
-│   │
-│   ├── core/
-│   │   ├── pipeline.py            # Main orchestration pipeline
-│   │   ├── model_analysis.py      # ONNX graph parsing and model profiling
-│   │   ├── runtime_profiler.py    # Latency and memory estimation
-│   │   ├── framework_adapter.py   # Inference runtime compatibility layer
-│   │   ├── risk_engine.py         # Signal aggregation and risk scoring
-│   │   ├── decision.py            # Risk-to-decision threshold mapping
-│   │   └── confidence.py          # Decision confidence estimation
-│   │
-│   ├── validation/
-│   │   ├── experiment_runner.py   # Validation harness entry point
-│   │   ├── test_determinism.py    # Verifies output reproducibility
-│   │   ├── test_concurrency.py    # Concurrent submission safety tests
-│   │   └── test_risk_scaling.py   # Risk score behavior across hardware tiers
-│   │
-│   ├── diagnostics/
-│   │   ├── report_builder.py      # Deployment report serialization
-│   │   └── logger.py              # Structured logging configuration
-│   │
-│   ├── rules/
-│   │   ├── threshold_policy.py    # Decision threshold definitions
-│   │   ├── signal_weights.py      # Per-signal weight configuration
-│   │   └── hardware_specs.py      # Hardware tier specification tables
-│   │
-│   └── gui/
-│       ├── templates/
-│       │   └── index.html         # Main UI template
-│       └── static/
-│           ├── app.js             # Frontend interaction logic
-│           └── styles.css         # UI styling
-│
-├── models/
-│   └── sample/                    # Sample ONNX models for testing
-│
-├── experiments/
-│   └── results/                   # Validation run output artifacts
-│
-├── scripts/
-│   ├── run_validation.sh          # Convenience script for validation suite
-│   └── export_report.py           # CLI report export utility
-│
-├── main.py                        # Application entry point
-├── gui_app.py                     # FastAPI application instance
-├── requirements.txt               # Python dependency manifest
-└── README.md
+│   ├── api/             # FastAPI protocol boundaries
+│   ├── cli/             # Target command-line entry layers
+│   ├── core/            # System data schema and central pipeline algorithms  
+│   ├── diagnostics/     # Application profilers and hardware inspectors
+│   ├── gui/             # Dashboard user interface views
+│   ├── rules/           # Fixed risk parameter weight limits
+│   └── validation/      # Target metrics and evaluation experiment invariants
+├── experiments/         # Evaluation state testing vectors
+├── quarantine/          # Blocked staging cache logic loops
+├── models/              # Local dataset parameter file states
+├── scripts/             # Internal operation helper components
+├── main.py              # CLI subsystem initialization target 
+├── gui_app.py           # Core web dashboard runtime script
+└── requirements.txt     # Python ecosystem network dependency configuration
 ```
 
-| Directory | Purpose |
-|---|---|
-| `src/api/` | HTTP layer — route definitions, request/response schemas, middleware |
-| `src/core/` | Engine logic — all analysis, profiling, scoring, and decision modules |
-| `src/validation/` | Test harness — reproducibility, concurrency, and risk scaling verification |
-| `src/diagnostics/` | Output layer — report building and structured logging |
-| `src/rules/` | Configuration — thresholds, signal weights, hardware tier specifications |
-| `src/gui/` | Web interface — HTML templates and frontend assets |
-| `models/` | Sample ONNX model files for local development and testing |
-| `experiments/` | Persisted output from validation runs and exploratory analyses |
-| `scripts/` | Shell and Python utility scripts for local operation |
-
----
-
-## Running the Project
-
-### Prerequisites
-
-- Python 3.10 or later
-- pip package manager
-
-### Install Dependencies
+## Running the System
 
 ```bash
 pip install -r requirements.txt
-```
-
-### Start the Server
-
-```bash
 uvicorn gui_app:app --host 127.0.0.1 --port 8080
 ```
 
-### Open the Web Interface
+## UI Screenshots
 
-```
-http://127.0.0.1:8080
-```
+### Dashboard
+!["Dashboard"](docs/images/dashboard.png)
 
-Use the model upload panel to submit an ONNX model file, configure the target hardware tier, and initiate analysis.
+### Model Upload
+!["Model Upload"](docs/images/model_upload.png)
 
-### Submit via REST API
+### Hardware Configuration
+!["Hardware Configuration"](docs/images/hardware_config.png)
 
-```bash
-curl -X POST http://127.0.0.1:8080/analyze \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model_path": "models/sample/resnet18.onnx",
-    "hardware_profile": "STANDARD"
-  }'
-```
+### Analysis Results
+!["Analysis Results"](docs/images/analysis_results.png)
 
-### Example Response
+## Validation System
 
-```json
-{
-  "model": "resnet18.onnx",
-  "hardware_profile": "STANDARD",
-  "risk_score": 4.2,
-  "confidence": {
-    "level": "HIGH",
-    "percentage": 91.4
-  },
-  "decision": "ALLOW_WITH_CONDITIONS",
-  "conditions": [
-    "Ensure deployment instance has a minimum of 4 GB available RAM.",
-    "Limit concurrent inference requests to 8 to avoid CPU saturation."
-  ],
-  "signals": {
-    "cpu_pressure": 0.61,
-    "memory_pressure": 0.48,
-    "gpu_availability": 0.00,
-    "latency_requirements": 0.35,
-    "io_bandwidth": 0.22,
-    "network_risk": 0.10,
-    "future_drift_risk": 0.30,
-    "compatibility_risk": 0.05,
-    "security_signal": 0.00
-  }
-}
-```
+The total infrastructure enforces a hyper-vigilant automated experiment validation matrix structured essentially to continuously audit calculation resilience specifically during rapid concurrent loading scenarios:
 
----
-
-## Experiment Validation
-
-The repository includes a structured validation harness in `src/validation/` that verifies the correctness and stability of the engine's core behaviors.
-
-```bash
-# Run full validation suite
-python -m src.validation.experiment_runner
-
-# Or via convenience script
-bash scripts/run_validation.sh
-```
-
-### Validation Coverage
-
-| Test | What It Verifies |
-|---|---|
-| **Risk Scaling** | Risk scores increase monotonically as models are evaluated against progressively constrained hardware tiers. A large model evaluated on `EDGE` must always score higher risk than the same model on `HPC`. |
-| **Confidence Variation** | Confidence levels vary appropriately with model complexity. Well-understood models produce `HIGH` confidence; edge-case architectures produce `LOW` confidence. |
-| **Determinism** | Submitting the same model and hardware profile ten times in sequence must produce identical risk scores, decisions, and signal breakdowns on all ten runs. |
-| **Concurrency Safety** | Submitting 50 concurrent analysis requests with varying model/hardware combinations must produce no race conditions, shared-state corruption, or inconsistent results. |
-
-Validation run results are persisted to `experiments/results/` with timestamps for traceability.
-
----
+- **Determinism:** The pipeline asserts robust verification constraints confirming consistently that identical uploaded execution models processing exactly identical local hardware target tiers strictly compute totally invariant metric results naturally free of dynamic score drift elements.
+- **Concurrency Safety:** Core system memory structures evaluate entirely safe for thread overlap. Massive batch deployment jobs naturally parallelize locally without any hidden variable bleed or structural configuration corruption happening dynamically. 
+- **Risk Scaling Verification:** Sub-component tests formally enforce risk parameter outputs tracking directly against stress limits efficiently dynamically shifting exponentially upward identically scaling exactly against escalating memory/latency bounds crossing target SLA maximums.  
+- **Confidence Variation:** The `ConfidenceEngine` natively monitors external inference components seamlessly decaying internal confidence score multipliers precisely against ambiguous models successfully ensuring unverified framework parameter gaps fundamentally trip deployment failure conditions strictly prior to reaching network.
 
 ## License
 
-```
-© 2026 Omar Nady — All Rights Reserved.
-
-This repository is made publicly available for portfolio viewing and
-academic research purposes only.
-
-The following are expressly prohibited without prior written permission
-from the author:
-
-  • Commercial use of any kind
-  • Redistribution of source code or compiled artifacts
-  • Creation of derivative works based on this codebase
-  • Integration of any portion of this project into other systems
-
-This project is not open-source software. Visibility does not imply license.
-```
-
----
-
-*AI Deployment Decision Engine — Portfolio Project — Omar Nady, 2026*
+Copyright © 2026 AI Deployment Decision Engine. All Rights Reserved.
