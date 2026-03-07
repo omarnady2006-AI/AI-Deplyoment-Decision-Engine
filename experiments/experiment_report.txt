@@ -1,0 +1,71 @@
+======================================================================
+DEPLOYMENT DECISION ENGINE — EXPERIMENT REPORT
+Generated: 2026-03-07T16:05:08
+API:       http://127.0.0.1:8080/api/analyze-and-decide
+======================================================================
+
+### MODEL × HARDWARE RESULT MATRIX
+
+Model                        HW              Risk RiskLvl      Decision                 Conf    Lat(ms)   Mem(MB)
+----------------------------------------------------------------------
+mnist_26kb                   EDGE          9.0000 HIGH_RISK    REJECTED               0.3110       0.25      0.03
+mnist_26kb                   STANDARD      4.1077 MEDIUM_RISK  APPROVED               0.8694       0.12      0.02
+mnist_26kb                   PRODUCTION    3.4428 LOW_RISK     APPROVED               0.9450       0.09      0.02
+mnist_26kb                   HPC           2.9957 LOW_RISK     APPROVED               0.9450       0.07      0.02
+yolov5s_28mb                 EDGE          9.0000 HIGH_RISK    REJECTED               0.2488     418.63     30.32
+yolov5s_28mb                 STANDARD      4.1077 MEDIUM_RISK  APPROVED               0.8694     191.90     27.56
+yolov5s_28mb                 PRODUCTION    3.4428 LOW_RISK     APPROVED               0.9450     157.41     27.56
+yolov5s_28mb                 HPC           2.9957 LOW_RISK     APPROVED               0.9450     112.65     27.56
+resnet50_100mb               EDGE          9.0000 HIGH_RISK    REJECTED               0.1866    1696.37    107.40
+resnet50_100mb               STANDARD      4.1077 MEDIUM_RISK  APPROVED               0.6955     777.63     97.64
+resnet50_100mb               PRODUCTION    3.4428 LOW_RISK     APPROVED               0.7560     637.86     97.64
+resnet50_100mb               HPC           2.9957 LOW_RISK     APPROVED               0.7560     456.49     97.64
+synthetic_10mb               EDGE             N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_10mb               STANDARD         N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_10mb               PRODUCTION       N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_10mb               HPC              N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_50mb               EDGE             N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_50mb               STANDARD         N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_50mb               PRODUCTION       N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_50mb               HPC              N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_200mb              EDGE             N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_200mb              STANDARD         N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_200mb              PRODUCTION       N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_200mb              HPC              N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_500mb              EDGE             N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_500mb              STANDARD         N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_500mb              PRODUCTION       N/A N/A          N/A                       N/A        N/A       N/A
+synthetic_500mb              HPC              N/A N/A          N/A                       N/A        N/A       N/A
+
+
+### CONCURRENCY & DETERMINISM RESULTS
+
+  5 workers:
+    success_count : 5
+    decisions     : ['APPROVED', 'APPROVED', 'APPROVED', 'APPROVED', 'APPROVED']
+    all_same_dec  : True
+    risk_values   : [4.1077, 4.1077, 4.1077, 4.1077, 4.1077]
+    risk_variance : 0.00000000
+
+  10 workers:
+    success_count : 10
+    decisions     : ['APPROVED', 'APPROVED', 'APPROVED', 'APPROVED', 'APPROVED', 'APPROVED', 'APPROVED', 'APPROVED', 'APPROVED', 'APPROVED']
+    all_same_dec  : True
+    risk_values   : [4.1077, 4.1077, 4.1077, 4.1077, 4.1077, 4.1077, 4.1077, 4.1077, 4.1077, 4.1077]
+    risk_variance : 0.00000000
+
+  1 workers:
+    success_count : N/A
+    decisions     : ['APPROVED', 'APPROVED', 'APPROVED', 'APPROVED', 'APPROVED']
+    all_same_dec  : True
+    risk_values   : [4.1077, 4.1077, 4.1077, 4.1077, 4.1077]
+    risk_variance : 0.00000000
+
+
+### BUG ANALYSIS
+
+  ✓  No bugs detected.
+
+======================================================================
+FINAL VERDICT: SYSTEM_VALIDATED
+======================================================================

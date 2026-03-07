@@ -1,0 +1,150 @@
+{
+  "matrix_results": [
+    {
+      "model": "mnist",
+      "hardware": "EDGE",
+      "decision": null,
+      "confidence": 0.5904,
+      "risk_score": 7.519992655898,
+      "risk_level": "MEDIUM_RISK",
+      "latency_ms": null,
+      "memory_mb": null,
+      "success": true
+    },
+    {
+      "model": "mnist",
+      "hardware": "STANDARD",
+      "decision": null,
+      "confidence": 0.8694000000000001,
+      "risk_score": 4.107689048649,
+      "risk_level": "MEDIUM_RISK",
+      "latency_ms": null,
+      "memory_mb": null,
+      "success": true
+    },
+    {
+      "model": "mnist",
+      "hardware": "PRODUCTION",
+      "decision": null,
+      "confidence": 0.9450000000000001,
+      "risk_score": 3.726648646374,
+      "risk_level": "LOW_RISK",
+      "latency_ms": null,
+      "memory_mb": null,
+      "success": true
+    },
+    {
+      "model": "mnist",
+      "hardware": "HPC",
+      "decision": null,
+      "confidence": 0.9450000000000001,
+      "risk_score": 2.806114133608,
+      "risk_level": "LOW_RISK",
+      "latency_ms": null,
+      "memory_mb": null,
+      "success": true
+    },
+    {
+      "model": "yolov5s",
+      "hardware": "EDGE",
+      "decision": null,
+      "confidence": 0.5904,
+      "risk_score": 7.519992655898,
+      "risk_level": "MEDIUM_RISK",
+      "latency_ms": null,
+      "memory_mb": null,
+      "success": true
+    },
+    {
+      "model": "yolov5s",
+      "hardware": "STANDARD",
+      "decision": null,
+      "confidence": 0.8694000000000001,
+      "risk_score": 4.107689048649,
+      "risk_level": "MEDIUM_RISK",
+      "latency_ms": null,
+      "memory_mb": null,
+      "success": true
+    },
+    {
+      "model": "yolov5s",
+      "hardware": "PRODUCTION",
+      "decision": null,
+      "confidence": 0.9450000000000001,
+      "risk_score": 3.726648646374,
+      "risk_level": "LOW_RISK",
+      "latency_ms": null,
+      "memory_mb": null,
+      "success": true
+    },
+    {
+      "model": "yolov5s",
+      "hardware": "HPC",
+      "decision": null,
+      "confidence": 0.9450000000000001,
+      "risk_score": 2.806114133608,
+      "risk_level": "LOW_RISK",
+      "latency_ms": null,
+      "memory_mb": null,
+      "success": true
+    },
+    {
+      "model": "resnet50",
+      "hardware": "EDGE",
+      "decision": null,
+      "confidence": 0.5904,
+      "risk_score": 7.519992655898,
+      "risk_level": "MEDIUM_RISK",
+      "latency_ms": null,
+      "memory_mb": null,
+      "success": true
+    },
+    {
+      "model": "resnet50",
+      "hardware": "STANDARD",
+      "decision": null,
+      "confidence": 0.8694000000000001,
+      "risk_score": 4.107689048649,
+      "risk_level": "MEDIUM_RISK",
+      "latency_ms": null,
+      "memory_mb": null,
+      "success": true
+    },
+    {
+      "model": "resnet50",
+      "hardware": "PRODUCTION",
+      "decision": null,
+      "confidence": 0.9450000000000001,
+      "risk_score": 3.726648646374,
+      "risk_level": "LOW_RISK",
+      "latency_ms": null,
+      "memory_mb": null,
+      "success": true
+    },
+    {
+      "model": "resnet50",
+      "hardware": "HPC",
+      "decision": null,
+      "confidence": 0.9450000000000001,
+      "risk_score": 2.806114133608,
+      "risk_level": "LOW_RISK",
+      "latency_ms": null,
+      "memory_mb": null,
+      "success": true
+    }
+  ],
+  "determinism": {
+    "runs": 5,
+    "unique": 1,
+    "deterministic": true
+  },
+  "concurrency": {
+    "workers": 5,
+    "valid": 5,
+    "unique": 1,
+    "ok": true
+  },
+  "risk_scaling_ok": true,
+  "confidence_varies": true,
+  "verdict": "SYSTEM_OPERATIONAL_AFTER_CLEANUP"
+}
