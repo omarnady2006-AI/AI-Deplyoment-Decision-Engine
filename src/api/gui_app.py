@@ -243,12 +243,47 @@ def _scale_memory_for_target_hw(
 # Helper Functions
 # ============================================================================
 
+
+def _safe_onnx_load(model_path: str):
+    """Load an ONNX model, bypassing the 64 MB protobuf cap on old cpp backends.
+
+    google-protobuf < 4.21 (cpp build) limits ParseFromString() to 64 MB.
+    protobuf >= 4.21 (upb/pure-python) has a 2 GB default — no cap for normal models.
+
+    If the file is not valid ONNX protobuf (e.g. a padded stub or wrong format),
+    a ValueError is raised with a clear user-facing message.
+    """
+    import onnx
+
+    # Lift the 64 MB cap for old cpp-protobuf backends (no-op on modern versions).
+    try:
+        from google.protobuf.pyext import _message as _pb_cpp  # type: ignore[import]
+        _pb_cpp.SetAllowOversizeProtos(True)
+    except Exception:
+        pass
+
+    try:
+        return onnx.load(model_path)
+    except Exception as _exc:
+        _msg = str(_exc)
+        # Protobuf parse errors indicate the file is not a valid ONNX model
+        # (e.g. padded stubs, truncated files, wrong format).
+        if "parsing" in _msg.lower() or "ModelProto" in _msg or "decode" in _msg.lower():
+            file_size_mb = Path(model_path).stat().st_size / (1024 * 1024)
+            raise ValueError(
+                f"The uploaded file is not a valid ONNX model "
+                f"(parse error on {file_size_mb:.1f} MB file). "
+                f"Ensure the file is a real exported ONNX model, not a padded or synthetic stub."
+            ) from _exc
+        raise
+
+
 def _analyze_model(model_path: str, precomputed_hash: str | None = None) -> dict[str, Any]:
     """Analyze a model file and return basic info."""
     try:
         import onnx
         
-        model = onnx.load(model_path)
+        model = _safe_onnx_load(model_path)
         graph = model.graph
         
         # Extract operators
@@ -433,7 +468,7 @@ def run_onnx_with_provider(
                 1: 4, 2: 1, 3: 1, 4: 2, 5: 2, 6: 4, 7: 8,
                 9: 1, 10: 2, 11: 8, 12: 4, 13: 8,
             }
-            g = onnx.load(model_path).graph
+            g = _safe_onnx_load(model_path).graph
             total = 0
             for init in g.initializer:
                 esz = _ELEM_BYTES.get(int(init.data_type), 4)
