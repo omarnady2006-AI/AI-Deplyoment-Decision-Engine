@@ -1,21 +1,10 @@
-from __future__ import annotations
-"""
-Copyright (c) 2026 Omar Nady
-
-Deployment Decision Engine
-Author: Omar Nady
-
-This source code is part of a portfolio demonstration project.
-Unauthorized commercial use, redistribution, or derivative work is prohibited.
-See LICENSE in the project root for full terms.
-"""
-
 """
 GUI Web Application for Deployment Decision Engine
 
 Serves the frontend UI and provides basic API endpoints.
 """
 
+from __future__ import annotations
 
 import hashlib
 import json
@@ -27,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
@@ -254,7 +243,7 @@ def _scale_memory_for_target_hw(
 # Helper Functions
 # ============================================================================
 
-def _analyze_model(model_path: str) -> dict[str, Any]:
+def _analyze_model(model_path: str, precomputed_hash: str | None = None) -> dict[str, Any]:
     """Analyze a model file and return basic info."""
     try:
         import onnx
@@ -310,10 +299,18 @@ def _analyze_model(model_path: str) -> dict[str, Any]:
             op_type = node.op_type
             operator_counts[op_type] = operator_counts.get(op_type, 0) + 1
         
-        # Calculate file hash
+        # Calculate file hash — reuse precomputed hash from the streaming upload
+        # to avoid loading the entire file into memory a second time.
         try:
-            model_bytes = Path(model_path).read_bytes()
-            file_hash = hashlib.sha256(model_bytes).hexdigest()
+            if precomputed_hash:
+                file_hash = precomputed_hash
+            else:
+                # Streaming fallback: compute hash without loading whole file into RAM.
+                _h = hashlib.sha256()
+                with open(model_path, "rb") as _hf:
+                    while _hchunk := _hf.read(8 * 1024 * 1024):
+                        _h.update(_hchunk)
+                file_hash = _h.hexdigest()
             model_hash_input = f"{Path(model_path).resolve()}:{file_hash}".encode("utf-8")
             model_hash = hashlib.sha1(model_hash_input).hexdigest()
         except Exception:
@@ -708,20 +705,9 @@ class AnalyzeAndDecideRequest(BaseModel):
 _UPLOAD_DIR = Path(tempfile.gettempdir()) / "deploycheck_uploads"
 _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# ── Benchmark cache (BUG-3 fix: eliminate OS-jitter latency inversions) ──────
-# Key: (model_hash, provider) → benchmark result dict
-# Once a model has been benchmarked on a given provider, the raw server
-# measurement is stored and reused for all subsequent hardware profiles.
-# Hardware-specific scaling (_scale_latency_for_target_hw) is applied on top
-# of the cached raw measurement, so different profiles still get different
-# predicted latencies — but the SAME raw baseline guarantees correct ordering.
-import threading as _threading
-_BENCHMARK_CACHE: dict[tuple[str, str], dict] = {}
-_BENCHMARK_CACHE_LOCK = _threading.Lock()
-
 
 @app.post("/api/model/index")
-async def get_model_index(file: UploadFile = File(...)):
+async def get_model_index(file: UploadFile = File(..., max_upload_size=500 * 1024 * 1024)):
     """Accept an uploaded model file, save it to a temp path, and index it."""
     try:
         # Save uploaded file to a stable temp location using streaming to support
@@ -746,7 +732,7 @@ async def get_model_index(file: UploadFile = File(...)):
         except Exception:
             model_hash = safe_name
 
-        analysis = _analyze_model(model_path)
+        analysis = _analyze_model(model_path, precomputed_hash=file_hash)
 
         # Always reset full downstream pipeline regardless of success/failure
         with APP_STATE_LOCK:
@@ -1731,20 +1717,20 @@ async def recommend_decision(debug: bool = False, explain: bool = False):
 
 @app.post("/api/analyze-and-decide")
 async def analyze_and_decide(
-    file: UploadFile = File(...),
-    cpu_cores: int = Form(1),
-    ram_gb: float = Form(8.0),
-    gpu_available: bool = Form(False),
-    cuda_available: bool = Form(False),
-    vram_gb: float | None = Form(None),
-    trt_available: bool | None = Form(None),
-    stress_test: bool | None = Form(None),
-    cpu_arch: str | None = Form(None),
-    ram_ddr: str | None = Form(None),
-    target_latency_ms: float | None = Form(None),
-    memory_limit_mb: float | None = Form(None),
-    debug: bool = Form(False),
-    explain: bool = Form(False),
+    file: UploadFile = File(..., max_upload_size=500 * 1024 * 1024),
+    cpu_cores: int = 1,
+    ram_gb: float = 8.0,
+    gpu_available: bool = False,
+    cuda_available: bool = False,
+    vram_gb: float | None = None,
+    trt_available: bool | None = None,
+    stress_test: bool | None = None,
+    cpu_arch: str | None = None,
+    ram_ddr: str | None = None,
+    target_latency_ms: float | None = None,
+    memory_limit_mb: float | None = None,
+    debug: bool = False,
+    explain: bool = False,
 ):
     try:
         # Stream-save the uploaded file to support large models (up to 4 GB)
@@ -1768,7 +1754,7 @@ async def analyze_and_decide(
         except Exception:
             model_hash = safe_name
         
-        raw_analysis = _analyze_model(model_path)
+        raw_analysis = _analyze_model(model_path, precomputed_hash=file_hash)
         if not raw_analysis.get("success", False):
             raise HTTPException(
                 status_code=400,
@@ -1837,24 +1823,12 @@ async def analyze_and_decide(
                     },
                 }
             else:
-                cache_key = (model_hash_input.decode("utf-8"), provider)
-                with _BENCHMARK_CACHE_LOCK:
-                    cached_result = _BENCHMARK_CACHE.get(cache_key)
-                
-                if cached_result is not None and not stress_enabled:
-                    # Reuse raw benchmark to ensure base latency is perfectly deterministic
-                    runtime_benchmarks[runtime_name] = dict(cached_result)
+                if stress_enabled:
+                    runtime_benchmarks[runtime_name] = run_onnx_with_provider(
+                        model_path, provider, stress_runs=100
+                    )
                 else:
-                    if stress_enabled:
-                        res = run_onnx_with_provider(model_path, provider, stress_runs=100)
-                    else:
-                        res = run_onnx_with_provider(model_path, provider)
-                    
-                    runtime_benchmarks[runtime_name] = res
-                    
-                    if not stress_enabled and res.get("success"):
-                        with _BENCHMARK_CACHE_LOCK:
-                            _BENCHMARK_CACHE[cache_key] = res
+                    runtime_benchmarks[runtime_name] = run_onnx_with_provider(model_path, provider)
         
         runtime_rows: list[dict[str, Any]] = []
         # Extract deployment hardware params for scaling
@@ -2001,25 +1975,25 @@ async def analyze_and_decide(
                 mem_mb = row["memory_mb"]
                 tgt_lat = deployment_profile.get("target_latency_ms")
                 mem_lim = deployment_profile.get("memory_limit_mb")
-                _dp_cpu = int(deployment_profile.get("cpu_cores") or 1)
-                _dp_ram = float(deployment_profile.get("ram_gb") or 1.0)
-                _dp_ddr = str(deployment_profile.get("ram_ddr") or "").lower()
-                _dp_gpu = bool(deployment_profile.get("gpu_available", False))
+                cpu_cores = int(deployment_profile.get("cpu_cores") or 1)
+                ram_gb = float(deployment_profile.get("ram_gb") or 1.0)
+                ram_ddr = str(deployment_profile.get("ram_ddr") or "").lower()
+                gpu_avail = bool(deployment_profile.get("gpu_available", False))
 
                 # ── Hardware-tier penalty ──────────────────────────────────
                 # CPU cores: fewer cores = lower confidence for inference workloads
-                if _dp_cpu <= 1:
+                if cpu_cores <= 1:
                     confidence_score *= 0.72   # single core is very constrained
-                elif _dp_cpu <= 2:
+                elif cpu_cores <= 2:
                     confidence_score *= 0.82
-                elif _dp_cpu <= 4:
+                elif cpu_cores <= 4:
                     confidence_score *= 0.92
                 # else ≥8 cores → no penalty
 
                 # RAM: low RAM = higher risk of OOM or swapping
-                if _dp_ram < 1.0:
+                if ram_gb < 1.0:
                     confidence_score *= 0.55
-                elif _dp_ram < 2.0:
+                elif ram_gb < 2.0:
                     confidence_score *= 0.68
                 elif ram_gb < 4.0:
                     confidence_score *= 0.80
@@ -2040,7 +2014,7 @@ async def analyze_and_decide(
                     confidence_score *= ddr_penalty[ram_ddr]
 
                 # GPU runtimes on CPU-only hardware get a strong penalty
-                if row["runtime"] in ("ONNX_CUDA", "TensorRT") and not _dp_gpu:
+                if row["runtime"] in ("ONNX_CUDA", "TensorRT") and not gpu_avail:
                     confidence_score *= 0.30  # should already be UNSUPPORTED but just in case
 
                 # ── Latency vs target ─────────────────────────────────────
@@ -2080,7 +2054,7 @@ async def analyze_and_decide(
                 # ── Bonus: everything well within limits ──────────────────
                 lat_ok = tgt_lat is None or (lat_ms is not None and float(lat_ms) <= float(tgt_lat) * 0.75)
                 mem_ok = mem_lim is None or (mem_mb is not None and float(mem_mb) <= float(mem_lim) * 0.75)
-                if lat_ok and mem_ok and _dp_cpu >= 4 and _dp_ram >= 4.0:
+                if lat_ok and mem_ok and cpu_cores >= 4 and ram_gb >= 4.0:
                     confidence_score = min(1.0, confidence_score * 1.05)
 
                 confidence_score = max(0.10, min(1.0, confidence_score))
@@ -2250,12 +2224,7 @@ async def analyze_and_decide(
         _dp_cpu2 = int(deployment_profile.get("cpu_cores") or 1)
         _dp_ram2 = float(deployment_profile.get("ram_gb") or 1.0)
         _dp_gpu2 = bool(deployment_profile.get("gpu_available", False))
-        
-        # If no strict SLA target is provided, estimate the baseline expected latency
-        # constraint from hardware tier. A 1-core device implicitly operates under
-        # heavy latency stress compared to a 32-core server.
-        _hw_implied_target = max(5.0, 200.0 / math.sqrt(float(_dp_cpu2)))
-        _dp_tgt2 = float(target_latency_sla) if target_latency_sla is not None else _hw_implied_target
+        _dp_tgt2 = float(target_latency_sla) if target_latency_sla is not None else 200.0
 
         _sig_cpu2  = min(max(1.0 - (_dp_cpu2 - 1) / 15.0, 0.0), 1.0)  # 1 core→1.0, 16 cores→0.0
         _sig_mem2  = min(max(1.0 - _dp_ram2 / 8.0,         0.0), 1.0)  # 0.5 GB→0.94, 16 GB→0.0
@@ -2377,7 +2346,6 @@ async def analyze_and_decide(
             },
             "risk_score": risk_result["risk_score"],
             "risk_level": risk_result["risk_level"],
-            "confidence": adjusted_confidence,
             "model_path": model_path,
         }
 
@@ -2542,7 +2510,7 @@ async def get_calibration_stats():
 
 
 @app.post("/api/calibration/gpu/load")
-async def load_gpu_calibration(file: UploadFile = File(...)):
+async def load_gpu_calibration(file: UploadFile = File(..., max_upload_size=500 * 1024 * 1024)):
     """
     Load a GPU benchmark calibration JSON file into the decision pipeline.
 
@@ -2846,15 +2814,6 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8080)
 
-
-# ============================================================================
-# Compatibility aliases — map old frontend URLs to existing handlers
-# ============================================================================
-
-@app.post("/api/model/upload")
-async def upload_model_alias(file: UploadFile = File(...)):
-    """Alias for /api/model/index for frontend compatibility."""
-    return await get_model_index(file)
 
 # ============================================================================
 # Static UI Mount (same-origin with /api/*)
