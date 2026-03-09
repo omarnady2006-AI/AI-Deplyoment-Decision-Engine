@@ -4,26 +4,22 @@ import hashlib
 import logging
 import math
 import os
+import threading
+import time
 
 
-class _NoopLock:
-    """Deterministic no-op lock."""
-
-    def acquire(self, *args, **kwargs) -> bool:
-        return True
-
-    def release(self) -> None:
-        return None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        return None
+# FIX-CONCURRENCY: _NoopLock replaced with real threading.Lock.
+# The previous _NoopLock was a no-op that provided zero concurrency safety.
+# All shared mutable state guards now use threading.Lock() so that concurrent
+# requests cannot corrupt signal history, output stabilizer, metric cache, etc.
+def _make_lock() -> threading.Lock:
+    """Return a real threading.Lock for shared mutable state."""
+    return threading.Lock()
 
 
 def _perf_counter() -> float:
-    return 0.0
+    # FIX-TIMING: was hardcoded to 0.0 — now returns real wall-clock time.
+    return time.perf_counter()
 
 
 def _lcg(seed: int):
@@ -162,16 +158,16 @@ STRUCTURAL_SIGNALS: set[str] = {
 # Mutable module-level state — ALL accesses must go through their paired Lock.
 # ─────────────────────────────────────────────────────────────────────────────
 _STRUCTURAL_INEFFECTIVE_STREAKS: dict[str, int] = {}
-_STRUCTURAL_INEFFECTIVE_STREAKS_LOCK: _NoopLock = _NoopLock()
+_STRUCTURAL_INEFFECTIVE_STREAKS_LOCK: threading.Lock = _make_lock()
 _SIGNAL_EFFECTIVENESS_STREAK: dict[str, int] = {}
-_SIGNAL_EFFECTIVENESS_STREAK_LOCK: _NoopLock = _NoopLock()
+_SIGNAL_EFFECTIVENESS_STREAK_LOCK: threading.Lock = _make_lock()
 
 _RISK_SPAN_WINDOW: dict[str, list[float]] = {}
-_RISK_SPAN_WINDOW_LOCK: _NoopLock = _NoopLock()
+_RISK_SPAN_WINDOW_LOCK: threading.Lock = _make_lock()
 
 # Final-output stabilizer: EMA on (risk_score, confidence) per model+constraints key
 _OUTPUT_STABILIZER: dict[str, dict[str, float]] = {}
-_OUTPUT_STABILIZER_LOCK: _NoopLock = _NoopLock()
+_OUTPUT_STABILIZER_LOCK: threading.Lock = _make_lock()
 
 
 RISK_POLICY: dict[str, float] = {
@@ -239,7 +235,7 @@ _PROFILER_WARMUP_DONE: bool = False
 
 # STEP 1: Track signal values over runs to detect constants
 _SIGNAL_VALUE_HISTORY: dict[str, list[float]] = {}
-_SIGNAL_HISTORY_LOCK = _NoopLock()
+_SIGNAL_HISTORY_LOCK: threading.Lock = _make_lock()
 _SIGNAL_HISTORY_WINDOW = 10  # Further reduced for faster detection
 _CONSTANT_VARIANCE_THRESHOLD = 0.001  # Increased from 0.0001 - much less aggressive
 
@@ -884,7 +880,7 @@ def stabilize_metric(v: Any) -> float | None:
 # to suppress natural OS/hardware jitter from affecting the risk score.
 _PIPELINE_METRIC_CACHE: dict[str, float] = {}
 _PIPELINE_METRIC_SAMPLES: dict[str, list[float]] = {}
-_PIPELINE_METRIC_LOCK: _NoopLock = _NoopLock()
+_PIPELINE_METRIC_LOCK: threading.Lock = _make_lock()
 _PIPELINE_WARMUP_CALLS = 3   # collect 3 samples before locking baseline
 
 def _stabilize_pipeline_metric(key: str, value: float, threshold: float = 0.005, model_id: str = "") -> float:

@@ -20,7 +20,7 @@ from src.diagnostics.report import Diagnostic
 from src.validation.runtime_validator import RuntimeValidationResult
 
 if TYPE_CHECKING:
-    from src.core.latency_measurement import LatencyMeasurement
+    from src.core.latency_measurement import LatencyStatistics
 
 
 HIGH_OPERATOR_COUNT_CONFIDENCE_PENALTY = 0.05
@@ -73,7 +73,7 @@ def compute_confidence(
     validation: RuntimeValidationResult,
     reliability_score: float | None = None,
     latency_variance: float | None = None,
-    latency_measurement: "LatencyMeasurement | None" = None,
+    latency_measurement: "LatencyStatistics | None" = None,
     sla_passed: bool | None = None,
     memory_within_limit: bool | None = None,
     operator_count: int | None = None,

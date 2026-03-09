@@ -58,7 +58,15 @@ def evaluate_deployment_risk(
     if has_dynamic_shapes:
         risk_score += 2
     
-    memory_growth_mb = analysis.get("memory_growth_mb", 0)
+    # FIX-ISSUE-6: Check basic dict and nested stress_test dict
+    memory_growth_mb = analysis.get("memory_growth_mb")
+    if memory_growth_mb is None:
+        memory_growth_mb = analysis.get("stress_test", {}).get("memory_growth_mb", 0)
+    
+    # safeguard against None inside stress_test
+    if memory_growth_mb is None:
+        memory_growth_mb = 0
+
     if memory_growth_mb > MEMORY_GROWTH_THRESHOLD_MB:
         risk_score += 2
     
