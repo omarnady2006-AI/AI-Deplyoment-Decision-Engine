@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
@@ -243,47 +243,12 @@ def _scale_memory_for_target_hw(
 # Helper Functions
 # ============================================================================
 
-
-def _safe_onnx_load(model_path: str):
-    """Load an ONNX model, bypassing the 64 MB protobuf cap on old cpp backends.
-
-    google-protobuf < 4.21 (cpp build) limits ParseFromString() to 64 MB.
-    protobuf >= 4.21 (upb/pure-python) has a 2 GB default — no cap for normal models.
-
-    If the file is not valid ONNX protobuf (e.g. a padded stub or wrong format),
-    a ValueError is raised with a clear user-facing message.
-    """
-    import onnx
-
-    # Lift the 64 MB cap for old cpp-protobuf backends (no-op on modern versions).
-    try:
-        from google.protobuf.pyext import _message as _pb_cpp  # type: ignore[import]
-        _pb_cpp.SetAllowOversizeProtos(True)
-    except Exception:
-        pass
-
-    try:
-        return onnx.load(model_path)
-    except Exception as _exc:
-        _msg = str(_exc)
-        # Protobuf parse errors indicate the file is not a valid ONNX model
-        # (e.g. padded stubs, truncated files, wrong format).
-        if "parsing" in _msg.lower() or "ModelProto" in _msg or "decode" in _msg.lower():
-            file_size_mb = Path(model_path).stat().st_size / (1024 * 1024)
-            raise ValueError(
-                f"The uploaded file is not a valid ONNX model "
-                f"(parse error on {file_size_mb:.1f} MB file). "
-                f"Ensure the file is a real exported ONNX model, not a padded or synthetic stub."
-            ) from _exc
-        raise
-
-
-def _analyze_model(model_path: str, precomputed_hash: str | None = None) -> dict[str, Any]:
+def _analyze_model(model_path: str) -> dict[str, Any]:
     """Analyze a model file and return basic info."""
     try:
         import onnx
         
-        model = _safe_onnx_load(model_path)
+        model = onnx.load(model_path, load_external_data=False)
         graph = model.graph
         
         # Extract operators
@@ -334,23 +299,31 @@ def _analyze_model(model_path: str, precomputed_hash: str | None = None) -> dict
             op_type = node.op_type
             operator_counts[op_type] = operator_counts.get(op_type, 0) + 1
         
-        # Calculate file hash — reuse precomputed hash from the streaming upload
-        # to avoid loading the entire file into memory a second time.
+        # Calculate file hash — streaming to avoid loading large models into memory
         try:
-            if precomputed_hash:
-                file_hash = precomputed_hash
-            else:
-                # Streaming fallback: compute hash without loading whole file into RAM.
-                _h = hashlib.sha256()
-                with open(model_path, "rb") as _hf:
-                    while _hchunk := _hf.read(8 * 1024 * 1024):
-                        _h.update(_hchunk)
-                file_hash = _h.hexdigest()
+            _h = hashlib.sha256()
+            with open(model_path, "rb") as _hf:
+                while True:
+                    _hchunk = _hf.read(8 * 1024 * 1024)
+                    if not _hchunk:
+                        break
+                    _h.update(_hchunk)
+            file_hash = _h.hexdigest()
             model_hash_input = f"{Path(model_path).resolve()}:{file_hash}".encode("utf-8")
             model_hash = hashlib.sha1(model_hash_input).hexdigest()
         except Exception:
             model_hash = Path(model_path).name
         
+        # FIX-ISSUE-4: compute parameter_scale_class here so it is always
+        # present in raw_analysis.  Previously only _build_facts() set this
+        # field, meaning callers of raw_analysis got the silent 'small' default.
+        if parameter_count >= 25_000_000:
+            parameter_scale_class = "large"
+        elif parameter_count >= 8_000_000:
+            parameter_scale_class = "medium"
+        else:
+            parameter_scale_class = "small"
+
         return {
             "model_path": model_path,
             "file_hash": model_hash,
@@ -358,6 +331,7 @@ def _analyze_model(model_path: str, precomputed_hash: str | None = None) -> dict
             "operators": list(operators),
             "operator_counts": operator_counts,
             "parameter_count": parameter_count,
+            "parameter_scale_class": parameter_scale_class,
             "has_dynamic_shapes": has_dynamic_shapes,
             "input_count": len(graph.input),
             "output_count": len(graph.output),
@@ -468,7 +442,7 @@ def run_onnx_with_provider(
                 1: 4, 2: 1, 3: 1, 4: 2, 5: 2, 6: 4, 7: 8,
                 9: 1, 10: 2, 11: 8, 12: 4, 13: 8,
             }
-            g = _safe_onnx_load(model_path).graph
+            g = onnx.load(model_path).graph
             total = 0
             for init in g.initializer:
                 esz = _ELEM_BYTES.get(int(init.data_type), 4)
@@ -665,12 +639,13 @@ def run_onnx_with_provider(
 @app.get("/api/state")
 async def get_state():
     """Expose current in-memory state snapshot for frontend hydration."""
+    import copy
     with APP_STATE_LOCK:
-        model_state = APP_STATE.get("model")
-        diagnostics_state = APP_STATE.get("diagnostics")
-        analysis_state = APP_STATE.get("analysis")
-        decision_state = APP_STATE.get("decision")
-        deployment_profile_state = APP_STATE.get("deployment_profile")
+        model_state = copy.deepcopy(APP_STATE.get("model"))
+        diagnostics_state = copy.deepcopy(APP_STATE.get("diagnostics"))
+        analysis_state = copy.deepcopy(APP_STATE.get("analysis"))
+        decision_state = copy.deepcopy(APP_STATE.get("decision"))
+        deployment_profile_state = copy.deepcopy(APP_STATE.get("deployment_profile"))
 
     if decision_state is not None:
         current_stage = "decision"
@@ -742,7 +717,7 @@ _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @app.post("/api/model/index")
-async def get_model_index(file: UploadFile = File(..., max_upload_size=500 * 1024 * 1024)):
+async def get_model_index(file: UploadFile = File(...)):
     """Accept an uploaded model file, save it to a temp path, and index it."""
     try:
         # Save uploaded file to a stable temp location using streaming to support
@@ -767,7 +742,7 @@ async def get_model_index(file: UploadFile = File(..., max_upload_size=500 * 102
         except Exception:
             model_hash = safe_name
 
-        analysis = _analyze_model(model_path, precomputed_hash=file_hash)
+        analysis = _analyze_model(model_path)
 
         # Always reset full downstream pipeline regardless of success/failure
         with APP_STATE_LOCK:
@@ -940,12 +915,11 @@ async def update_calibration(request: CalibrationUpdateRequest):
         timestamp = time.time()
 
         with APP_STATE_LOCK:
-            calibration = APP_STATE.get("calibration")
-            if not isinstance(calibration, dict):
-                calibration = {}
-                APP_STATE["calibration"] = calibration
+            _cal = APP_STATE.get("calibration")
+            calibration = dict(_cal) if isinstance(_cal, dict) else {}
             calibration["latency_reference_ms"] = updated_reference
             calibration["updated_at"] = timestamp
+            APP_STATE["calibration"] = calibration
 
         return {
             "success": True,
@@ -1445,10 +1419,13 @@ async def recommend_decision(debug: bool = False, explain: bool = False):
         # BEFORE SLA logic. Does NOT modify SLA rules or confidence scaling.  #
         # ------------------------------------------------------------------ #
         from src.core.decision_layer_integration import apply_hardware_aware_override
+        _hw_override_gpu = bool((deployment_profile or {}).get("gpu_available", False))
         resolved_runtime, hw_decision = apply_hardware_aware_override(
             best_runtime=best_runtime,
             model_size=analysis.get("analysis", {}).get("parameter_scale_class", "small"),
             batch_size=1,
+            evaluations=evaluations,
+            gpu_available=_hw_override_gpu,
         )
         best_runtime = resolved_runtime
         # ------------------------------------------------------------------ #
@@ -1594,24 +1571,79 @@ async def recommend_decision(debug: bool = False, explain: bool = False):
         _dp_gpu1 = bool(deployment_profile.get("gpu_available", False))
         _dp_tgt1 = float(target_latency_ms) if target_latency_ms is not None else 200.0
 
-        _sig_cpu1  = min(max(1.0 - (_dp_cpu1 - 1) / 15.0, 0.0), 1.0)  # 1 core→1.0, 16 cores→0.0
-        _sig_mem1  = min(max(1.0 - _dp_ram1 / 8.0,         0.0), 1.0)  # 0.5 GB→0.94, 16 GB→0.0
-        _sig_lat1  = min(max(1.0 - _dp_tgt1 / 200.0,       0.0), 1.0)  # 1 ms→1.0,  200 ms→0.0
+        # Real model-size pressure from the uploaded model file.
+        _model_path1 = str((model or {}).get("path") or "")
+        try:
+            _model_size_mb1 = (
+                float(Path(_model_path1).stat().st_size) / (1024.0 * 1024.0)
+                if _model_path1
+                else 0.0
+            )
+        except Exception:
+            _model_size_mb1 = 0.0
+        _model_size_pressure1 = min(
+            max(_model_size_mb1 / max(_dp_ram1 * 1024.0 * 0.40, 1.0), 0.0),
+            1.0,
+        )
+        adjusted_confidence = max(
+            0.0,
+            min(1.0, adjusted_confidence * (1.0 - (0.20 * _model_size_pressure1))),
+        )
+
+        _sig_cpu1  = min(max(1.0 - (_dp_cpu1 / 8.0), 0.0), 0.95)  # 1 core→0.875, 4 cores→0.5, 8 cores→0.0
+        _sig_mem1_base = min(max(1.0 - _dp_ram1 / 8.0, 0.0), 1.0)  # 0.5 GB→0.94, 16 GB→0.0
+        # FIX-MODEL_SIZE_MASKED_ON_EDGE: old formula max(base, pressure) floored at
+        # sig_mem_base=0.75 on EDGE (2 GB RAM), swallowing all model-size variation.
+        # Additive formula ensures pressure always increments memory stress even when
+        # the hw floor is already high: small→~0.75, medium→~0.82, large→~0.95 on EDGE.
+        _sig_mem1 = min(_sig_mem1_base + _model_size_pressure1 * 0.6, 1.0)
+        # Latency signal: ratio of measured latency to target budget.
+        # High ratio (barely fits) → high stress. Low ratio (headroom) → low stress.
+        # Ensures EDGE > STANDARD > PRODUCTION > HPC ordering.
+        # FIX-RISK_ORDERING_BUG: old fallback (1 - target/200) was inverted — a tighter
+        # HPC target of 20 ms scored HIGHER risk than PRODUCTION's 50 ms target.
+        # New fallback estimates latency from hw capacity and normalises against a fixed
+        # 200 ms reference baseline so ordering reflects hardware tier, not target
+        # tightness: EDGE≈1.0 ≥ STANDARD≈0.60 ≥ PRODUCTION≈0.15 ≥ HPC≈0.075.
+        # FIX-LATENCY-SEMANTICS: only penalise when measured latency EXCEEDS the target.
+        # latency < target → 0.0 (no risk), latency > target → growing risk up to 1.0.
+        # Fallback (no measurement) uses hw-capacity estimate unchanged.
+        if predicted_latency_ms is not None and predicted_latency_ms > 0.0:
+            _sig_lat1 = min(max((float(predicted_latency_ms) - _dp_tgt1) / max(_dp_tgt1, 1.0), 0.0), 1.0)
+        else:
+            _hw_scale1 = max(_dp_cpu1, 1) / 4.0
+            _est_lat1  = 120.0 / _hw_scale1
+            _sig_lat1  = min(_est_lat1 / 200.0, 1.0)
         _sig_gpu1  = 0.0 if _dp_gpu1 else 0.5
+
+        # FIX-ISSUE-5: Replace static 0.5 with model-aware and hardware-aware values
+        _has_dyn1 = analysis.get("analysis", {}).get("has_dynamic_shapes", False)
+        _bw_sig1 = max(_sig_mem1, 0.1)
+        _io_sig1 = _model_size_pressure1
+        _net_sig1 = _model_size_pressure1 * 0.8
+        _compat_sig1 = 0.8 if _has_dyn1 else 0.2
+        _sec_sig1 = max(_sig_lat1 * 0.5, 0.1)
+        # FIX-RESIDUAL_HARDCODED_SIGNAL: future_drift was pinned at 0.2.
+        # Larger models have more operator churn and version-skew risk → higher drift.
+        _future_drift1 = min(0.1 + _model_size_pressure1 * 0.5, 0.6)
+        # FIX-CONCURRENCY: was _sig_cpu1 (duplicate); now models thread contention separately.
+        _concurrency_sig1 = min(_sig_cpu1 * 0.6 + 0.2, 0.9)
+        # FIX-NUMA: was _sig_mem1 (duplicate); now a weaker derivative of memory topology.
+        _numa_sig1 = min(_sig_mem1 * 0.5, 0.4)
 
         _pipeline_signals1: dict[str, float] = {
             "cpu":             _sig_cpu1,
             "memory":          _sig_mem1,
             "latency":         _sig_lat1,
             "gpu":             _sig_gpu1,
-            "bandwidth":       0.5,
-            "io":              0.5,
-            "network":         0.5,
-            "concurrency":     _sig_cpu1,
-            "numa":            _sig_mem1,
-            "future_drift":    0.5,
-            "compatibility":   0.5,
-            "security_signal": 0.5,
+            "bandwidth":       _bw_sig1,
+            "io":              _io_sig1,
+            "network":         _net_sig1,
+            "concurrency":     _concurrency_sig1,
+            "numa":            _numa_sig1,
+            "future_drift":    _future_drift1,
+            "compatibility":   _compat_sig1,
+            "security_signal": _sec_sig1,
         }
 
         _pipeline_risk1: float = compute_risk(_pipeline_signals1)
@@ -1752,18 +1784,18 @@ async def recommend_decision(debug: bool = False, explain: bool = False):
 
 @app.post("/api/analyze-and-decide")
 async def analyze_and_decide(
-    file: UploadFile = File(..., max_upload_size=500 * 1024 * 1024),
-    cpu_cores: int = 1,
-    ram_gb: float = 8.0,
-    gpu_available: bool = False,
-    cuda_available: bool = False,
-    vram_gb: float | None = None,
-    trt_available: bool | None = None,
-    stress_test: bool | None = None,
-    cpu_arch: str | None = None,
-    ram_ddr: str | None = None,
-    target_latency_ms: float | None = None,
-    memory_limit_mb: float | None = None,
+    file: UploadFile = File(...),
+    cpu_cores: int = Form(1),
+    ram_gb: float = Form(8.0),
+    gpu_available: bool = Form(False),
+    cuda_available: bool = Form(False),
+    vram_gb: float | None = Form(None),
+    trt_available: bool | None = Form(None),
+    stress_test: bool | None = Form(None),
+    cpu_arch: str | None = Form(None),
+    ram_ddr: str | None = Form(None),
+    target_latency_ms: float | None = Form(None),
+    memory_limit_mb: float | None = Form(None),
     debug: bool = False,
     explain: bool = False,
 ):
@@ -1789,7 +1821,7 @@ async def analyze_and_decide(
         except Exception:
             model_hash = safe_name
         
-        raw_analysis = _analyze_model(model_path, precomputed_hash=file_hash)
+        raw_analysis = _analyze_model(model_path)
         if not raw_analysis.get("success", False):
             raise HTTPException(
                 status_code=400,
@@ -2132,10 +2164,13 @@ async def analyze_and_decide(
         base_confidence = float(analysis_state.get("confidence") or 0.5)
         
         from src.core.decision_layer_integration import apply_hardware_aware_override
+        _hw_override_gpu2 = bool(deployment_profile.get("gpu_available", False))
         resolved_runtime, hw_decision = apply_hardware_aware_override(
             best_runtime=best_runtime,
             model_size=raw_analysis.get("parameter_scale_class", "small"),
             batch_size=1,
+            evaluations=evaluations,
+            gpu_available=_hw_override_gpu2,
         )
         best_runtime = resolved_runtime
         
@@ -2261,24 +2296,74 @@ async def analyze_and_decide(
         _dp_gpu2 = bool(deployment_profile.get("gpu_available", False))
         _dp_tgt2 = float(target_latency_sla) if target_latency_sla is not None else 200.0
 
-        _sig_cpu2  = min(max(1.0 - (_dp_cpu2 - 1) / 15.0, 0.0), 1.0)  # 1 core→1.0, 16 cores→0.0
-        _sig_mem2  = min(max(1.0 - _dp_ram2 / 8.0,         0.0), 1.0)  # 0.5 GB→0.94, 16 GB→0.0
-        _sig_lat2  = min(max(1.0 - _dp_tgt2 / 200.0,       0.0), 1.0)  # 1 ms→1.0,  200 ms→0.0
+        # Real model-size pressure from the uploaded model file.
+        try:
+            _model_size_mb2 = float(Path(model_path).stat().st_size) / (1024.0 * 1024.0)
+        except Exception:
+            _model_size_mb2 = 0.0
+        _model_size_pressure2 = min(
+            max(_model_size_mb2 / max(_dp_ram2 * 1024.0 * 0.40, 1.0), 0.0),
+            1.0,
+        )
+        adjusted_confidence = max(
+            0.0,
+            min(1.0, adjusted_confidence * (1.0 - (0.20 * _model_size_pressure2))),
+        )
+
+        _sig_cpu2  = min(max(1.0 - (_dp_cpu2 / 8.0), 0.0), 0.95)  # 1 core→0.875, 4 cores→0.5, 8 cores→0.0
+        _sig_mem2_base = min(max(1.0 - _dp_ram2 / 8.0, 0.0), 1.0)  # 0.5 GB→0.94, 16 GB→0.0
+        # FIX-MODEL_SIZE_MASKED_ON_EDGE: old formula max(base, pressure) floored at
+        # sig_mem_base=0.75 on EDGE (2 GB RAM), swallowing all model-size variation.
+        # Additive formula ensures pressure always increments memory stress even when
+        # the hw floor is already high: small→~0.75, medium→~0.82, large→~0.95 on EDGE.
+        _sig_mem2 = min(_sig_mem2_base + _model_size_pressure2 * 0.6, 1.0)
+        # Latency signal: ratio of measured latency to target budget.
+        # High ratio (barely fits) → high stress. Low ratio (headroom) → low stress.
+        # Ensures EDGE > STANDARD > PRODUCTION > HPC ordering.
+        # FIX-RISK_ORDERING_BUG: old fallback (1 - target/200) was inverted — a tighter
+        # HPC target of 20 ms scored HIGHER risk than PRODUCTION's 50 ms target.
+        # New fallback estimates latency from hw capacity and normalises against a fixed
+        # 200 ms reference baseline so ordering reflects hardware tier, not target
+        # tightness: EDGE≈1.0 ≥ STANDARD≈0.60 ≥ PRODUCTION≈0.15 ≥ HPC≈0.075.
+        # FIX-LATENCY-SEMANTICS: only penalise when measured latency EXCEEDS the target.
+        # latency < target → 0.0 (no risk), latency > target → growing risk up to 1.0.
+        # Fallback (no measurement) uses hw-capacity estimate unchanged.
+        if predicted_latency_ms is not None and predicted_latency_ms > 0.0:
+            _sig_lat2 = min(max((float(predicted_latency_ms) - _dp_tgt2) / max(_dp_tgt2, 1.0), 0.0), 1.0)
+        else:
+            _hw_scale2 = max(_dp_cpu2, 1) / 4.0
+            _est_lat2  = 120.0 / _hw_scale2
+            _sig_lat2  = min(_est_lat2 / 200.0, 1.0)
         _sig_gpu2  = 0.0 if _dp_gpu2 else 0.5
+
+        # FIX-ISSUE-5: Replace static 0.5 with model-aware and hardware-aware values
+        _has_dyn2 = raw_analysis.get("has_dynamic_shapes", False)
+        _bw_sig2 = max(_sig_mem2, 0.1)
+        _io_sig2 = _model_size_pressure2
+        _net_sig2 = _model_size_pressure2 * 0.8
+        _compat_sig2 = 0.8 if _has_dyn2 else 0.2
+        _sec_sig2 = max(_sig_lat2 * 0.5, 0.1)
+        # FIX-RESIDUAL_HARDCODED_SIGNAL: future_drift was pinned at 0.2.
+        # Larger models have more operator churn and version-skew risk → higher drift.
+        _future_drift2 = min(0.1 + _model_size_pressure2 * 0.5, 0.6)
+        # FIX-CONCURRENCY: was _sig_cpu2 (duplicate); now models thread contention separately.
+        _concurrency_sig2 = min(_sig_cpu2 * 0.6 + 0.2, 0.9)
+        # FIX-NUMA: was _sig_mem2 (duplicate); now a weaker derivative of memory topology.
+        _numa_sig2 = min(_sig_mem2 * 0.5, 0.4)
 
         _pipeline_signals2: dict[str, float] = {
             "cpu":             _sig_cpu2,
             "memory":          _sig_mem2,
             "latency":         _sig_lat2,
             "gpu":             _sig_gpu2,
-            "bandwidth":       0.5,
-            "io":              0.5,
-            "network":         0.5,
-            "concurrency":     _sig_cpu2,
-            "numa":            _sig_mem2,
-            "future_drift":    0.5,
-            "compatibility":   0.5,
-            "security_signal": 0.5,
+            "bandwidth":       _bw_sig2,
+            "io":              _io_sig2,
+            "network":         _net_sig2,
+            "concurrency":     _concurrency_sig2,
+            "numa":            _numa_sig2,
+            "future_drift":    _future_drift2,
+            "compatibility":   _compat_sig2,
+            "security_signal": _sec_sig2,
         }
 
         _pipeline_risk2: float = compute_risk(_pipeline_signals2)
@@ -2371,13 +2456,13 @@ async def analyze_and_decide(
 
         response_body: dict[str, Any] = {
             "success": True,
-            "summary": summary,
-            "runtime_details": decision_state,
-            "evaluations": evaluations,
+            "summary": dict(summary),
+            "runtime_details": dict(decision_state),
+            "evaluations": list(evaluations),
             "analysis_state": {
                 "best_runtime": analysis_state.get("best_runtime"),
-                "confidence": analysis_state.get("confidence"),
-                "evaluations": evaluations,
+                "confidence": adjusted_confidence,
+                "evaluations": list(evaluations),
             },
             "risk_score": risk_result["risk_score"],
             "risk_level": risk_result["risk_level"],
@@ -2545,7 +2630,7 @@ async def get_calibration_stats():
 
 
 @app.post("/api/calibration/gpu/load")
-async def load_gpu_calibration(file: UploadFile = File(..., max_upload_size=500 * 1024 * 1024)):
+async def load_gpu_calibration(file: UploadFile = File(...)):
     """
     Load a GPU benchmark calibration JSON file into the decision pipeline.
 
