@@ -1,14 +1,3 @@
-"""
-Copyright (c) 2026 Omar Nady
-
-Deployment Decision Engine
-Author: Omar Nady
-
-This source code is part of a portfolio demonstration project.
-Unauthorized commercial use, redistribution, or derivative work is prohibited.
-See LICENSE in the project root for full terms.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -124,6 +113,7 @@ RUNTIME_SIGNALS: set[str] = {
     "memory",               # memory_cluster   — maps to memory_pressure / peak_memory_mb
     "cpu",                  # cpu_pipeline_pressure
     "bandwidth",            # memory_bandwidth_pressure / bandwidth_pressure
+    "model_pressure",       # model_pressure   — latency+memory pressure vs hardware limits
     "scheduler_pressure_new",  # scheduler_pressure (psutil fallback)
     "gpu",                  # gpu_cluster
     "io",                   # io_pressure
@@ -202,6 +192,10 @@ RISK_POLICY: dict[str, float] = {
     "compatibility":   0.04,
     "security_signal": 0.04,
 }
+# Phase 4: Extend — do NOT overwrite — to preserve all original weights intact.
+# model_pressure is added as a new entry; _compute_risk_internal normalises
+# weights at call-time so the total-sum invariant is maintained automatically.
+RISK_POLICY["model_pressure"] = 0.16
 
 
 
@@ -3572,7 +3566,11 @@ def _derive_decision_and_confidence(
     _telemetry_present = has_measured_latency or has_measured_memory
     _security_signal = _clamp(security_risk_runtime / 10.0, 0.0, 1.0) if _telemetry_present else 0.0
 
-    # Repair 1: weighted_signal_values contains ONLY the 12 RISK_POLICY signals.
+    # Phase 5: read model_pressure safely before building weighted_signal_values
+    # Backward-compatible: defaults to 0.0 if profiler did not emit the signal
+    model_pressure = runtime_values.get("model_pressure", 0.0)
+
+    # Repair 1: weighted_signal_values contains ONLY the RISK_POLICY signals.
     # Dead signals (shadow, canary, coverage, misuse, incident, live_drift,
     # failure, scaling_cost, traffic, stability, contention) are removed.
     weighted_signal_values: dict[str, float] = {
@@ -3603,6 +3601,8 @@ def _derive_decision_and_confidence(
         # security_signal: telemetry-gated, 0 when no measurements present
         "security_signal": _security_signal,
     }
+    # Phase 5: inject model_pressure after construction (spec pattern)
+    weighted_signal_values["model_pressure"] = model_pressure
 
     core_metric_map = {
         "memory": "memory",
@@ -3856,6 +3856,11 @@ def _derive_decision_and_confidence(
     if _telemetry_present:
         measured_derived_signals.add("security_signal")
 
+    # model_pressure: derived from latency_p95 + peak_memory_mb in the profiler.
+    # Present whenever either of its source measurements is available.
+    if has_measured_latency or has_measured_memory:
+        measured_derived_signals.add("model_pressure")
+
     _presence_mask: set[str] = set()
     for _k in RISK_POLICY:
         _mapped = core_metric_map.get(_k)
@@ -4012,92 +4017,49 @@ def _derive_decision_and_confidence(
     #
     # Correct model: confidence = product of three INDEPENDENT factors,
     # each expressing a distinct dimension of measurement quality:
+    # FIX-2: Confidence calculation — sigmoid formula depending on risk, signal
+    # diversity, and hardware capacity.  The previous multi-factor multiplicative
+    # formula collapsed to ~0.1 for all profiles because each factor multiplied
+    # floors together, making confidence invariant to hardware capability.
     #
-    #   coverage_factor     = how many signals we measured           [0.2, 1.0]
-    #   consistency_factor  = how stable/realistic the measurements  [0.3, 1.0]
-    #   stability_factor    = latency jitter / measurement noise     [0.3, 1.0]
-    #
-    # Each factor has a floor > 0 so that extremely bad quality in one
-    # dimension cannot zero out the other two.  Confidence expresses
-    # "how much should we trust this risk score" — not "how much evidence
-    # did we gather" (that is already reflected in the risk score itself).
-    #
-    calibrated_confidence = _compute_calibrated_confidence(risk_score)
-    base_confidence = calibrated_confidence
+    #   normalized_risk   = min(risk_score / 10, 1)
+    #   signal_diversity  = active_scored_signals / total_policy_signals
+    #   hardware_capacity = log2(cpu_cores + 1) / log2(33)
+    #   confidence        = sigmoid(3.0*(1-normalized_risk)
+    #                               + 0.8*signal_diversity
+    #                               + 0.4*hardware_capacity)
+    #   confidence        = clamp(confidence, 0.05, 0.99)
 
-    # Use raw measured values for confidence -- no EMA, no cross-call state.
-    # _stabilize_pipeline_metric() accumulates samples in a module-level dict
-    # across unrelated model evaluations; that makes confidence non-deterministic.
-    latency_mean_for_filter = _safe_float(runtime_values.get("latency_mean") or 0.0, 0.0)
-    latency_std_for_conf    = _safe_float(latency_std, 0.0)
-    stability_uncertainty_penalty = (
-        0.5 if (latency_std_for_conf > 0.0
-                and latency_mean_for_filter > 0.0
-                and latency_std_for_conf > latency_mean_for_filter * 0.25)
-        else 0.0
+    # Compute realism_score here so downstream integrity checks can reference it
+    _measured_signal_count = int(_safe_float(runtime_values.get("measured_signal_count"), 0.0))
+    _total_signal_count    = int(max(1, _safe_float(runtime_values.get("total_signal_count"), 10.0)))
+    _signal_coverage_raw   = _clamp(_measured_signal_count / float(_total_signal_count), 0.0, 1.0)
+    realism_score          = _clamp(
+        _safe_float(runtime_values.get("profiler_realism_score"), _signal_coverage_raw), 0.0, 1.0
     )
 
-    measured_signal_count = int(_safe_float(runtime_values.get("measured_signal_count"), 0.0))
-    total_signal_count    = int(max(1, _safe_float(runtime_values.get("total_signal_count"), 10.0)))
-    signal_coverage       = _clamp(measured_signal_count / float(total_signal_count), 0.0, 1.0)
-    realism_score         = _clamp(
-        _safe_float(runtime_values.get("profiler_realism_score"), signal_coverage), 0.0, 1.0
+    _cpu_cores_for_conf = int(_safe_float(
+        (constraints or {}).get("cpu_cores", 4), 4
+    ))
+    _cpu_cores_for_conf = max(1, _cpu_cores_for_conf)
+
+    _normalized_risk    = min(risk_score / 10.0, 1.0)
+    _num_active_scored  = len([s for s, v in scored_signal_values.items() if v > 0.0])
+    _total_policy_sigs  = max(1, len(RISK_POLICY))
+    _signal_diversity   = _clamp(_num_active_scored / float(_total_policy_sigs), 0.0, 1.0)
+    _hardware_capacity  = math.log2(_cpu_cores_for_conf + 1) / math.log2(33)
+
+    def _sigmoid(x: float) -> float:
+        return 1.0 / (1.0 + math.exp(-float(x)))
+
+    _conf_raw  = _sigmoid(
+        3.0 * (1.0 - _normalized_risk)
+        + 0.8 * _signal_diversity
+        + 0.4 * _hardware_capacity
     )
-    if measured_signal_count == 0:
-        runtime_values["metric_missing"] = {
-            **(runtime_values.get("metric_missing") or {}),
-            "latency": True,
-            "memory":  True,
-            "cpu":     True,
-        }
-        realism_score   = max(realism_score,   0.05)
-        signal_coverage = max(signal_coverage, 0.05)
-
-    jitter = _clamp(
-        latency_std_for_conf / max(latency_mean_for_filter, 1e-9),
-        0.0, 1.0
-    ) if latency_mean_for_filter > 0.0 else 0.0
-
-    # ── Factor 1: coverage — how many signals were measured ──────────────
-    # Floor at 0.20: even with 1 signal we have some information.
-    # Ceiling at 1.0: full coverage gives no bonus beyond 1.0.
-    coverage_factor = _clamp(0.20 + 0.80 * _signal_health, 0.0, 1.0)
-
-    # ── Factor 2: consistency — realism / profiler fidelity ──────────────
-    # Floor at 0.30: profiler estimates (realism≈0) are still meaningful.
-    consistency_factor = _clamp(0.30 + 0.70 * realism_score, 0.0, 1.0)
-
-    # ── Factor 3: stability — measurement jitter ─────────────────────────
-    # High jitter → we cannot trust individual readings → lower confidence.
-    # Floor at 0.30: even an unstable measurement contains signal.
-    stability_factor = _clamp(1.0 - 0.70 * jitter, 0.30, 1.0)
-
-    confidence = round(
-        _clamp(base_confidence * coverage_factor * consistency_factor * stability_factor, 0.0, 1.0),
-        6
-    )
+    confidence = float(min(max(_conf_raw, 0.05), 0.99))
 
 
-    # FIX-B: Missing telemetry handling via confidence only (no synthetic risk).
-    # coverage_ratio is computed earlier as present_count / total_signals.
-    coverage = _coverage_ratio
-    coverage_penalty = 1.0 - coverage
-    confidence = round(_clamp(confidence * (1.0 - 0.6 * coverage_penalty), 0.0, 1.0), 6)
-
-    # REPAIR A: Apply correlation confidence penalty.
-    # When signals are lock-stepped (high correlation, low variance at low load),
-    # we have less independent information — confidence is reduced, NOT the signals.
-    confidence = round(_clamp(confidence * _correlation_confidence_penalty, 0.0, 1.0), 6)
-
-    # Secondary jitter guard (large absolute jitter on top of ratio jitter)
-    if jitter > 0.25:
-        confidence = round(_clamp(confidence * 0.85, 0.0, 1.0), 6)
-
-    confidence = round(_clamp(confidence * (1.0 - stability_uncertainty_penalty), 0.0, 1.0), 6)
-    
-    # STEP 7: Apply anti-default confidence reduction
-    if _anti_default_triggered:
-        confidence = round(_clamp(confidence * 0.5, 0.0, 1.0), 6)
 
     if risk_score >= 8.0:
         decision = DeploymentDecision.BLOCK.value
@@ -5028,18 +4990,6 @@ def _derive_decision_and_confidence(
         decision = "ALLOW_WITH_CONDITIONS"
     else:
         decision = "ALLOW"
-
-    # ── Feature 3: Deployment Policy Engine ──────────────────────────────────
-    # External policy may only restrict decisions — never override BLOCK with ALLOW.
-    # Wrapped in try/except so a missing or malformed policy file never breaks the pipeline.
-    try:
-        from src.core.policy_loader import load_policy as _load_policy
-        _policy = _load_policy()
-        if _policy.get("max_model_size_mb"):
-            if model_size_mb and model_size_mb > _policy["max_model_size_mb"]:
-                decision = "BLOCK"
-    except Exception:
-        pass  # Policy failure must not break pipeline
     # ────────────────────────────────────────────────────────────────────────
 
 
@@ -5384,25 +5334,7 @@ def _derive_decision_and_confidence(
     _final_risk = _clamp(float(return_dict.get("risk_score", 0.0)), 0.0, 10.0)
     return_dict["risk_score"] = round(_final_risk, 4)
     return_dict["_internal_final_risk"] = round(_final_risk, 6)
-
-    # ── Feature 1: Risk Explainability ───────────────────────────────────────
-    # Compute per-signal contribution (signal_value * signal_weight) from the
-    # same weighted_signal_values dict that fed compute_risk.  This is additive:
-    # no existing key is modified.
-    _risk_contributions: dict[str, float] = {}
-    for _sig_name, _sig_weight in RISK_POLICY.items():
-        _sig_val = weighted_signal_values.get(_sig_name, 0.0)
-        _risk_contributions[_sig_name] = round(_sig_val * _sig_weight, 6)
-
-    _top_risk_factors = sorted(
-        _risk_contributions.items(),
-        key=lambda x: x[1],
-        reverse=True,
-    )[:5]
-
-    return_dict["risk_contributions"] = _risk_contributions
-    return_dict["top_risk_factors"] = _top_risk_factors
-
+    
     return decision, confidence, return_dict
 
 
@@ -5588,6 +5520,7 @@ def run_pipeline(
             request_id=_pipeline_request_id,
             production_validation=production_validation,
             profile=profile,
+            constraints=effective_constraints,
         )
         
         if production_validation:
@@ -5923,6 +5856,17 @@ def run_pipeline(
             decision = "ALLOW_WITH_CONDITIONS"
         else:
             decision = "ALLOW"
+
+        # FIX-3: Security block enforcement — cannot be overridden by risk score.
+        # The re-derivation above uses risk_score_stable which may be < 8 even when
+        # the security scanner explicitly returned security_risk >= 8.  Security
+        # violations are out-of-band signals; they must unconditionally set BLOCK
+        # regardless of the quantitative risk path.
+        _final_security_risk = float(runtime.get("security_risk", 0.0))
+        if _final_security_risk >= 8.0:
+            decision = "BLOCK"
+            confidence = min(confidence, 0.2)
+            print("SECURITY_BLOCK_ENFORCED", {"security_risk": _final_security_risk, "confidence_capped": confidence})
 
         print("DECISION INPUT:", {
             "diagnostics_count": len(diagnostics),
