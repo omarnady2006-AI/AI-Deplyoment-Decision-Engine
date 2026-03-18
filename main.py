@@ -5,16 +5,7 @@ Deployment Decision Engine - Main Entry Point
 A verifiable safety system for deployment decision making.
 
 Usage:
-    python main.py --cli <model.onnx>
     python main.py --gui
-    python main.py --api
-    python main.py --supervisor
-    python main.py --validate
-    python main.py --all
-    
-GUI Usage:
-    python main.py --gui                    # Open GUI on default port 8080
-    python main.py --gui --port 9000       # Open GUI on custom port
 """
 
 from __future__ import annotations
