@@ -117,6 +117,13 @@ deployment_decision_engine/
 │   ├── gui/             # Dashboard user interface views
 │   ├── rules/           # Fixed risk parameter weight limits
 │   └── validation/      # Target metrics and evaluation experiment invariants
+<<<<<<< HEAD
+=======
+├── experiments/         # Evaluation state testing vectors
+├── quarantine/          # Blocked staging cache logic loops
+├── models/              # Local dataset parameter file states
+├── scripts/             # Internal operation helper components
+>>>>>>> 981183b7c0bb6f208d16f0ea2601f65178eb7cb3
 ├── main.py              # CLI subsystem initialization target 
 ├── gui_app.py           # Core web dashboard runtime script
 └── requirements.txt     # Python ecosystem network dependency configuration
