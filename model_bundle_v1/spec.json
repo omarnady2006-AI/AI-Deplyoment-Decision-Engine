@@ -1,0 +1,9 @@
+{
+  "name": "example_model",
+  "version": "1.0.0",
+  "input_shape": [1, 3, 224, 224],
+  "input_dtype": "float32",
+  "output_shape": [1, 1000],
+  "output_dtype": "float32",
+  "batch_supported": false
+}
